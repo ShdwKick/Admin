@@ -1,0 +1,32 @@
+name: bh-admin
+
+services:
+  admin:
+    image: shadowkick/admin:latest
+    container_name: admin
+    restart: unless-stopped
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8793
+      AUTH_ISSUER: https://auth.burninghouse.ru
+      AUTH_CLIENT_ID: admin
+      # Общий секрет с /internal/* остальных сервисов. То же самое значение —
+      # в Auth, Финансах, Movies, Trip. Сгенерировать: openssl rand -hex 32
+      ADMIN_INTERNAL_KEY: замените-на-случайную-строку
+      # Какие сервисы показывать. Один из них обязан иметь id "auth" —
+      # через него идёт управление пользователями.
+      SERVICES_JSON: >-
+        [{"id":"auth","name":"Вход","baseUrl":"https://auth.burninghouse.ru"},
+         {"id":"finance","name":"Мои финансы","baseUrl":"https://money.burninghouse.ru"},
+         {"id":"movies","name":"Что смотрим?","baseUrl":"https://movies.burninghouse.ru"},
+         {"id":"trip","name":"Куда поедем?","baseUrl":"https://trip.burninghouse.ru"}]
+      # Сервис должен быть зарегистрирован в auth как клиент (справочно, выполняется
+      # один раз руками на сервере):
+      #   docker compose exec auth node server.js client-add admin "Админка" https://admin.burninghouse.ru/
+      # А хотя бы один аккаунт должен получить доступ:
+      #   docker compose exec auth node server.js make-admin <логин>
+    ports:
+      # Только на localhost — наружу отдаёт nginx на 443 (см. deploy/nginx-admin-443.conf).
+      - "127.0.0.1:8793:8793"

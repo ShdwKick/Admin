@@ -1,0 +1,112 @@
+/* Токены сервиса — калий, сирень. Остальное (фон, знак, локап) — brand.css. */
+:root{
+  --flame-base:#581c87;
+  --flame-tip:#c77dff;
+  --night-1:#0d0a16;
+  --night-2:#241a3a;
+  --dawn-1:#faf5ff;
+  --dawn-2:#ecd9ff;
+
+  --ink:#e8e3f2;
+  --ink-dim:#a89fc2;
+  --card-bg:color-mix(in srgb, var(--night-2) 55%, #000 45%);
+  --card-border:color-mix(in srgb, var(--flame-tip) 22%, transparent);
+  --ok:#7ddf3c;
+  --warn:#ffd447;
+  --danger:#ff5c72;
+}
+:root[data-theme="light"]{
+  --ink:#241a3a;
+  --ink-dim:#6b6280;
+  --card-bg:#ffffff;
+  --card-border:color-mix(in srgb, var(--flame-base) 16%, transparent);
+}
+@media (prefers-color-scheme:light){
+  :root:not([data-theme="dark"]){
+    --ink:#241a3a; --ink-dim:#6b6280;
+    --card-bg:#ffffff; --card-border:color-mix(in srgb, var(--flame-base) 16%, transparent);
+  }
+}
+
+*{ box-sizing:border-box; }
+html,body{ height:100%; }
+body{
+  margin:0; background:transparent; color:var(--ink);
+  font:15px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif;
+}
+
+.bh-page{ min-height:100%; display:flex; flex-direction:column; }
+.bh-topbar{
+  display:flex; align-items:center; justify-content:space-between;
+  gap:1rem; padding:1rem 1.5rem;
+}
+.bh-topbar .bh-lockup{ color:var(--ink); }
+
+.bh-who{ display:flex; align-items:center; gap:.75rem; font-size:.9rem; color:var(--ink-dim); }
+.bh-who button{ all:unset; cursor:pointer; color:var(--ink-dim); text-decoration:underline; text-underline-offset:.2em; }
+.bh-who button:hover{ color:var(--ink); }
+
+main{ flex:1; padding:0 1.5rem 3rem; max-width:72rem; margin:0 auto; width:100%; }
+
+.bh-tabs{ display:flex; gap:.25rem; margin-bottom:1.5rem; border-bottom:1px solid var(--card-border); }
+.bh-tab{
+  all:unset; cursor:pointer; padding:.6rem 1rem; color:var(--ink-dim);
+  border-bottom:2px solid transparent; font-size:.92rem;
+}
+.bh-tab:hover{ color:var(--ink); }
+.bh-tab.is-active{ color:var(--ink); border-bottom-color:var(--flame-tip); }
+
+.bh-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(15rem,1fr)); gap:1rem; }
+
+.bh-card{
+  background:var(--card-bg); border:1px solid var(--card-border); border-radius:.9rem;
+  padding:1.1rem 1.25rem;
+}
+.bh-card h3{ margin:0 0 .6rem; font-size:.95rem; display:flex; align-items:center; gap:.5rem; }
+.bh-dot{ width:.55rem; height:.55rem; border-radius:50%; flex:none; }
+.bh-dot.ok{ background:var(--ok); box-shadow:0 0 6px color-mix(in srgb, var(--ok) 70%, transparent); }
+.bh-dot.down{ background:var(--danger); }
+.bh-stat-row{ display:flex; justify-content:space-between; font-size:.87rem; color:var(--ink-dim); padding:.15rem 0; }
+.bh-stat-row b{ color:var(--ink); font-weight:600; }
+.bh-card .bh-error{ color:var(--danger); font-size:.85rem; }
+
+.bh-toolbar{ display:flex; flex-wrap:wrap; gap:.6rem; align-items:center; margin-bottom:1rem; }
+select, input[type="text"]{
+  background:var(--card-bg); color:var(--ink); border:1px solid var(--card-border);
+  border-radius:.5rem; padding:.4rem .6rem; font:inherit;
+}
+button.bh-btn{
+  all:unset; cursor:pointer; padding:.4rem .8rem; border-radius:.5rem; font-size:.85rem;
+  background:color-mix(in srgb, var(--flame-tip) 16%, transparent); color:var(--ink);
+  border:1px solid var(--card-border);
+}
+button.bh-btn:hover{ background:color-mix(in srgb, var(--flame-tip) 26%, transparent); }
+button.bh-btn.danger{ color:var(--danger); }
+button.bh-btn:disabled{ opacity:.5; cursor:default; }
+
+table.bh-table{ width:100%; border-collapse:collapse; font-size:.88rem; }
+table.bh-table th{ text-align:left; color:var(--ink-dim); font-weight:500; padding:.5rem .6rem; border-bottom:1px solid var(--card-border); }
+table.bh-table td{ padding:.5rem .6rem; border-bottom:1px solid color-mix(in srgb, var(--card-border) 60%, transparent); vertical-align:middle; }
+table.bh-table tr:hover td{ background:color-mix(in srgb, var(--flame-tip) 5%, transparent); }
+
+.bh-badge{ display:inline-block; font-size:.72rem; padding:.1rem .5rem; border-radius:1rem; border:1px solid var(--card-border); color:var(--ink-dim); }
+.bh-badge.admin{ color:var(--flame-tip); border-color:color-mix(in srgb, var(--flame-tip) 50%, transparent); }
+.bh-badge.disabled{ color:var(--danger); border-color:color-mix(in srgb, var(--danger) 50%, transparent); }
+
+.bh-loglist{ display:flex; flex-direction:column; gap:.35rem; font-family:ui-monospace,Consolas,monospace; font-size:.82rem; max-height:70vh; overflow:auto; }
+.bh-logline{ display:flex; gap:.6rem; padding:.35rem .5rem; border-radius:.4rem; background:var(--card-bg); border:1px solid var(--card-border); }
+.bh-logline .ts{ color:var(--ink-dim); flex:none; }
+.bh-logline .lvl{ flex:none; text-transform:uppercase; font-weight:700; font-size:.72rem; padding-top:.1rem; }
+.bh-logline.info .lvl{ color:var(--ink-dim); }
+.bh-logline.warn .lvl{ color:var(--warn); }
+.bh-logline.error .lvl{ color:var(--danger); }
+.bh-logline .msg{ flex:1; word-break:break-word; }
+
+.bh-empty{ color:var(--ink-dim); font-size:.9rem; padding:2rem 0; text-align:center; }
+
+.bh-gate{
+  display:flex; align-items:center; justify-content:center; flex:1; text-align:center;
+  flex-direction:column; gap:1rem; padding:2rem;
+}
+.bh-gate p{ color:var(--ink-dim); max-width:26rem; }
+.bh-gate button.bh-btn{ padding:.6rem 1.4rem; font-size:.95rem; }

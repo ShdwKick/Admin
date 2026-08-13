@@ -1,0 +1,24 @@
+name: bh-admin
+
+services:
+  admin:
+    build: .
+    image: shadowkick/admin:latest
+    container_name: admin
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8793
+      AUTH_ISSUER: http://localhost:8788
+      AUTH_CLIENT_ID: admin
+      # То же самое значение, что в Auth/Финансах/Movies/Trip на локальной машине.
+      ADMIN_INTERNAL_KEY: dev-admin-key
+      SERVICES_JSON: >-
+        [{"id":"auth","name":"Вход","baseUrl":"http://localhost:8788"},
+         {"id":"finance","name":"Мои финансы","baseUrl":"http://localhost:8787"},
+         {"id":"movies","name":"Что смотрим?","baseUrl":"http://localhost:8792"},
+         {"id":"trip","name":"Куда поедем?","baseUrl":"http://localhost:8790"}]
+    ports:
+      - "127.0.0.1:8793:8793"
+
+# Данных не хранит — volume не нужен.
