@@ -55,7 +55,7 @@
     app.innerHTML = `
       <div class="bh-gate">
         <p>Вы вошли как «${escapeHtml(user.name || user.username || "")}», но у этого аккаунта
-        нет доступа в Админку. Доступ выдаётся командой <code>make-admin</code> на сервере Auth.</p>
+        нет доступа в Админку.</p>
       </div>`;
   }
 

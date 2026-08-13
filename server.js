@@ -55,6 +55,14 @@ if (!ADMIN_INTERNAL_KEY) {
   console.error("Не задан ADMIN_INTERNAL_KEY — Admin не сможет ходить в /internal/* остальных сервисов. То же значение должно быть прописано и у них.");
   process.exit(1);
 }
+// Ключ уходит в HTTP-заголовок X-Admin-Key (см. callService ниже), а заголовки —
+// это ASCII/Latin1. Кириллица или любой юникод там технически невалидны и
+// роняют fetch с нечитаемой ошибкой "Cannot convert argument to a ByteString…"
+// на КАЖДЫЙ запрос, а не один раз при старте — проверяем сразу, чтобы не гадать.
+if (!/^[\x21-\x7e]+$/.test(ADMIN_INTERNAL_KEY)) {
+  console.error("ADMIN_INTERNAL_KEY должен состоять из ASCII-символов без пробелов (это значение HTTP-заголовка). Похоже, в переменной остался плейсхолдер или скопировался юникод. Сгенерировать: openssl rand -hex 32");
+  process.exit(1);
+}
 
 let SERVICES = [];
 try {

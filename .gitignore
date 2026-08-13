@@ -1,3 +1,7 @@
+# Секреты для docker-compose.prod.yml (ADMIN_INTERNAL_KEY) — подставляются
+# через ${VAR:-}, живут только на сервере, права 600
+.env
+
 # Артефакты ОС/редакторов
 *.log
 .DS_Store

@@ -12,9 +12,12 @@ services:
       PORT: 8793
       AUTH_ISSUER: https://auth.burninghouse.ru
       AUTH_CLIENT_ID: admin
-      # Общий секрет с /internal/* остальных сервисов. То же самое значение —
-      # в Auth, Финансах, Movies, Trip. Сгенерировать: openssl rand -hex 32
-      ADMIN_INTERNAL_KEY: замените-на-случайную-строку
+      # ОБЯЗАТЕЛЬНО. Общий секрет с /internal/* остальных сервисов — то же самое
+      # значение должно быть в Auth, Финансах, Movies, Trip. Берётся из файла
+      # .env рядом с этим compose (права 600), в репозиторий не попадает.
+      # Пустым или с юникодом внутри Admin вообще не запустится (см. server.js),
+      # а не упадёт на первом запросе. Сгенерировать: openssl rand -hex 32
+      ADMIN_INTERNAL_KEY: ${ADMIN_INTERNAL_KEY:-}
       # Какие сервисы показывать. Один из них обязан иметь id "auth" —
       # через него идёт управление пользователями.
       SERVICES_JSON: >-

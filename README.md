@@ -60,3 +60,22 @@ docker compose up --build
 `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN`, SSH-ключа быть не должно.
 
 nginx — `deploy/nginx-admin-443.conf`, `admin.burninghouse.ru`.
+
+### ADMIN_INTERNAL_KEY на сервере
+
+`docker-compose.prod.yml` ссылается на переменную подстановкой
+(`${ADMIN_INTERNAL_KEY:-}`), а не хранит значение сам — так секрет не уходит в
+репозиторий и не затирается очередным `git pull`. Значение — в файле `.env`
+рядом с compose (как `POISKKINO_API_KEY` у Movies, `GIGACHAT_AUTH_KEY` у Trip):
+
+```bash
+cd ~/admin
+printf 'ADMIN_INTERNAL_KEY=%s\n' 'то же значение, что у Auth/Финансов/Movies/Trip' > .env
+chmod 600 .env
+docker compose -f docker-compose.prod.yml up -d   # перечитать .env
+```
+
+**Одно и то же значение нужно так же положить в `.env` всех остальных четырёх
+сервисов** и там же поднять их `up -d` — иначе `/internal/*` будет отвечать
+403 (ключи не совпали), а не 500: незаданный ключ там намеренно безопасный
+дефолт, а не ошибка конфигурации. `.env` не коммитьте — он в `.gitignore`.
