@@ -212,6 +212,20 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      // Список "комнат" (общих групп с кодом приглашения — trips у Trip, rooms у
+      // Movies, если появится). Не все сервисы это реализуют — тогда сервис
+      // просто ответит 404 на /internal/rooms, и это уйдёт как upstream-ошибка.
+      const roomsMatch = p.match(/^\/api\/services\/([\w-]+)\/rooms$/);
+      if (roomsMatch && method === "GET") {
+        const service = SERVICES.find(s => s.id === roomsMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        try {
+          return json(res, 200, await callService(service, "/internal/rooms"));
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+
       // Управление пользователями — только через auth, остальные сервисы своих не ведут.
       if (p === "/api/users" && method === "GET") {
         if (!AUTH_SERVICE) return json(res, 501, { error: "auth_not_configured" });
@@ -232,6 +246,22 @@ const server = http.createServer(async (req, res) => {
         try {
           await callService(AUTH_SERVICE, `/internal/users/${encodeURIComponent(userId)}/${action}`, { method: "POST", body });
           logSelf("info", `Admin-действие: ${action}`, { userId, by: admin.username, on: action === "logout-all" ? undefined : !!body.on });
+          return json(res, 200, { ok: true });
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+
+      const deleteMatch = p.match(/^\/api\/users\/([\w-]+)$/);
+      if (deleteMatch && method === "DELETE") {
+        if (!AUTH_SERVICE) return json(res, 501, { error: "auth_not_configured" });
+        const userId = deleteMatch[1];
+        if (userId === admin.id) {
+          return json(res, 400, { error: "self_action", message: "Нельзя удалить самого себя отсюда — используйте CLI на сервере" });
+        }
+        try {
+          await callService(AUTH_SERVICE, `/internal/users/${encodeURIComponent(userId)}`, { method: "DELETE" });
+          logSelf("warn", "Admin-действие: delete", { userId, by: admin.username });
           return json(res, 200, { ok: true });
         } catch (e) {
           return json(res, 502, { error: "upstream", message: e.message });

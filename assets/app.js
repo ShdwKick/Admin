@@ -79,6 +79,7 @@
     app.innerHTML = `
       <div class="bh-tabs">
         <button class="bh-tab is-active" data-tab="overview">Обзор</button>
+        <button class="bh-tab" data-tab="rooms">Комнаты</button>
         <button class="bh-tab" data-tab="logs">Логи</button>
         <button class="bh-tab" data-tab="users">Пользователи</button>
       </div>
@@ -92,6 +93,7 @@
       body.innerHTML = `<div class="bh-empty">Загрузка…</div>`;
       try {
         if (tab === "overview") return renderOverview(body, initialOverview);
+        if (tab === "rooms") return renderRooms(body, initialOverview.services);
         if (tab === "logs") return renderLogs(body, initialOverview.services);
         if (tab === "users") return renderUsers(body);
       } catch (e) {
@@ -123,6 +125,52 @@
     const ts = new Date(l.ts).toLocaleString("ru-RU");
     const meta = l.meta ? " " + JSON.stringify(l.meta) : "";
     return `<div class="bh-logline ${escapeHtml(l.level)}"><span class="ts">${ts}</span><span class="lvl">${escapeHtml(l.level)}</span><span class="msg">${escapeHtml(l.message)}${escapeHtml(meta)}</span></div>`;
+  }
+
+  const ROOM_STATUS = { planning: "в планах", active: "в процессе", done: "завершена" };
+
+  function renderRooms(body, services) {
+    if (!services.length) { body.innerHTML = `<div class="bh-empty">Сервисы не настроены</div>`; return; }
+    body.innerHTML = `
+      <div class="bh-toolbar">
+        <select id="roomsService">${services.map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`).join("")}</select>
+        <button class="bh-btn" id="roomsRefresh">Обновить</button>
+      </div>
+      <div id="roomsList"></div>
+    `;
+    const svcSel = document.getElementById("roomsService");
+    const list = document.getElementById("roomsList");
+
+    async function load() {
+      list.innerHTML = `<div class="bh-empty">Загрузка…</div>`;
+      try {
+        const data = await api(`/api/services/${encodeURIComponent(svcSel.value)}/rooms`);
+        const rooms = data.rooms || [];
+        if (!rooms.length) { list.innerHTML = `<div class="bh-empty">Пусто</div>`; return; }
+        const rows = rooms.map(r => `
+          <tr>
+            <td>${escapeHtml(r.title || "—")}</td>
+            <td>${escapeHtml(r.destination || "—")}</td>
+            <td>${escapeHtml(ROOM_STATUS[r.status] || r.status || "—")}</td>
+            <td>${r.membersCount}</td>
+            <td>${r.placesCount}</td>
+            <td>${r.joinCode ? `<code>${escapeHtml(r.joinCode)}</code>` : "—"}</td>
+            <td>${new Date(r.createdAt).toLocaleDateString("ru-RU")}</td>
+          </tr>`).join("");
+        list.innerHTML = `
+          <table class="bh-table">
+            <thead><tr><th>Название</th><th>Направление</th><th>Статус</th><th>Участники</th><th>Мест</th><th>Код</th><th>Создана</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>`;
+      } catch (e) {
+        // 502/upstream — обычно значит, что у сервиса просто нет /internal/rooms
+        // (пока это реализовано только у Trip).
+        list.innerHTML = `<div class="bh-empty">Недоступно для этого сервиса: ${escapeHtml(e.message)}</div>`;
+      }
+    }
+    svcSel.onchange = load;
+    document.getElementById("roomsRefresh").onclick = load;
+    load();
   }
 
   function renderLogs(body, services) {
@@ -164,7 +212,7 @@
   async function renderUsers(body) {
     const data = await api("/api/users");
     const rows = (data.users || []).map(u => `
-      <tr data-id="${escapeHtml(u.id)}">
+      <tr data-id="${escapeHtml(u.id)}" data-username="${escapeHtml(u.username)}">
         <td>${escapeHtml(u.username)}${u.id === user.id ? ' <span class="bh-badge">это вы</span>' : ""}</td>
         <td>${escapeHtml(u.email || "—")}</td>
         <td>${u.admin ? '<span class="bh-badge admin">админ</span>' : ""}${u.disabled ? ' <span class="bh-badge disabled">заблокирован</span>' : ""}</td>
@@ -172,6 +220,7 @@
           <button class="bh-btn" data-action="admin" data-on="${u.admin ? "0" : "1"}" ${u.id === user.id ? "disabled" : ""}>${u.admin ? "Забрать доступ" : "Сделать админом"}</button>
           <button class="bh-btn" data-action="disabled" data-on="${u.disabled ? "0" : "1"}" ${u.id === user.id ? "disabled" : ""}>${u.disabled ? "Разблокировать" : "Заблокировать"}</button>
           <button class="bh-btn danger" data-action="logout-all">Разлогинить</button>
+          <button class="bh-btn danger" data-action="delete" ${u.id === user.id ? "disabled" : ""}>Удалить</button>
         </td>
       </tr>`).join("");
 
@@ -179,7 +228,30 @@
       ? `<table class="bh-table"><thead><tr><th>Логин</th><th>Почта</th><th>Статус</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
       : `<div class="bh-empty">Пользователей нет</div>`;
 
-    body.querySelectorAll("button[data-action]").forEach(btn => {
+    // Удаление безвозвратно и задевает данные во всех сервисах сразу — обычного
+    // confirm() мало. Как и у самих пользователей в кабинете BurningHouse
+    // (см. Auth/INTEGRATION.md), подтверждение — набрать логин вручную.
+    body.querySelectorAll("button[data-action='delete']").forEach(btn => {
+      btn.onclick = async () => {
+        const tr = btn.closest("tr");
+        const id = tr.dataset.id;
+        const username = tr.dataset.username;
+        const typed = prompt(`Это удалит аккаунт «${username}» безвозвратно — данные в Auth, привязка к остальным сервисам не восстановить.\nНаберите логин «${username}», чтобы подтвердить:`);
+        if (typed === null) return;
+        if (typed !== username) { alert("Логин введён неверно — отменено."); return; }
+
+        tr.querySelectorAll("button").forEach(b => b.disabled = true);
+        try {
+          await api(`/api/users/${encodeURIComponent(id)}`, { method: "DELETE" });
+          renderUsers(body);
+        } catch (e) {
+          alert("Не получилось: " + e.message);
+          tr.querySelectorAll("button").forEach(b => b.disabled = false);
+        }
+      };
+    });
+
+    body.querySelectorAll("button[data-action]:not([data-action='delete'])").forEach(btn => {
       btn.onclick = async () => {
         const tr = btn.closest("tr");
         const id = tr.dataset.id;
