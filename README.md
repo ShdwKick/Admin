@@ -70,10 +70,14 @@ nginx — `deploy/nginx-admin-443.conf`, `admin.burninghouse.ru`.
 
 ```bash
 cd ~/admin
-printf 'ADMIN_INTERNAL_KEY=%s\n' 'то же значение, что у Auth/Финансов/Movies/Trip' > .env
-chmod 600 .env
+bash set-env.sh ADMIN_INTERNAL_KEY 'то же значение, что у Auth/Финансов/Movies/Trip'
 docker compose -f docker-compose.prod.yml up -d   # перечитать .env
 ```
+
+`set-env.sh` (`Shared/set-env.sh`, копия рядом с compose — как `admin-internal.js`)
+меняет только эту одну строку, не трогая остальные секреты в `.env`, если они
+там уже есть (у Movies это `POISKKINO_API_KEY`, у Trip — `GIGACHAT_AUTH_KEY`):
+обычный `printf ... > .env` перезаписывает файл целиком и стирает их.
 
 **Одно и то же значение нужно так же положить в `.env` всех остальных четырёх
 сервисов** и там же поднять их `up -d` — иначе `/internal/*` будет отвечать
