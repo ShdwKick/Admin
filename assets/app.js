@@ -4,14 +4,25 @@
  * BurningHouse, обычный DOM и fetch. Кто админ, фронт не решает сам: он
  * просто дёргает защищённый /api/overview и по 403 понимает, что доступа нет
  * (см. Auth/INTEGRATION.md — claim admin проверяется на бэкенде, не на фронте).
+ *
+ * Навигация — хэш, как у Movies/Trip ("SPA с маршрутизацией по хэшу"):
+ *   #overview        — сетка карточек сервисов (по умолчанию)
+ *   #users           — управление пользователями
+ *   #service/<id>    — подробности одного сервиса: статистика, график,
+ *                       комнаты (если сервис их отдаёт) и логи — раньше это
+ *                       были отдельные вкладки «Комнаты»/«Логи» на все сервисы
+ *                       разом, теперь всё в одном месте на своём сервисе.
  */
 (async function () {
   const app = document.getElementById("app");
-  const whoBox = document.getElementById("whoBox");
+  const appbar = document.getElementById("appbar");
   const whoName = document.getElementById("whoName");
+  const accountBtn = document.getElementById("accountBtn");
   const logoutBtn = document.getElementById("logoutBtn");
 
   const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  window.addEventListener("scroll", () => appbar.classList.toggle("scrolled", window.scrollY > 4), { passive: true });
 
   const cfg = await (await fetch("/api/config")).json();
   const auth = createAuthClient({
@@ -24,6 +35,15 @@
   await auth.handleRedirect();
 
   if (!auth.isAuthenticated()) return showLoginGate();
+
+  // Показываем сразу по факту входа, не дожидаясь проверки claim admin —
+  // иначе у залогиненного, но не-админа, нет кнопки выйти вообще никак.
+  const user = auth.getUser() || {};
+  whoName.textContent = user.name || user.username || "";
+  whoName.style.display = "";
+  accountBtn.style.display = "";
+  accountBtn.onclick = () => window.open(auth.accountUrl(), "_blank", "noopener");
+  logoutBtn.style.display = "";
   logoutBtn.onclick = () => auth.logout();
 
   class ForbiddenError extends Error {}
@@ -41,7 +61,9 @@
   }
 
   function showLoginGate() {
-    whoBox.style.display = "none";
+    whoName.style.display = "none";
+    accountBtn.style.display = "none";
+    logoutBtn.style.display = "none";
     app.innerHTML = `
       <div class="bh-gate">
         <p>Аналитика, логи и управление ролями по сервисам BurningHouse.
@@ -51,7 +73,7 @@
     document.getElementById("loginBtn").onclick = () => auth.login();
   }
 
-  function showForbiddenGate(user) {
+  function showForbiddenGate() {
     app.innerHTML = `
       <div class="bh-gate">
         <p>Вы вошли как «${escapeHtml(user.name || user.username || "")}», но у этого аккаунта
@@ -59,125 +81,111 @@
       </div>`;
   }
 
-  const user = auth.getUser() || {};
-  whoBox.style.display = "flex";
-  whoName.textContent = user.name || user.username || "";
-
-  let overview;
+  // Пробный запрос заодно проверяет доступ (403 → showForbiddenGate).
   try {
-    overview = await api("/api/overview");
+    await api("/api/overview");
   } catch (e) {
-    if (e instanceof ForbiddenError) return showForbiddenGate(user);
+    if (e instanceof ForbiddenError) return showForbiddenGate();
     if (e.name === "AuthRequiredError") return; // showLoginGate уже вызван внутри api()
     app.innerHTML = `<div class="bh-empty">Не удалось загрузить: ${escapeHtml(e.message)}</div>`;
     return;
   }
 
-  renderShell(overview);
+  renderShell();
 
-  function renderShell(initialOverview) {
+  /* ---------- маршрутизация по хэшу ---------- */
+
+  function currentRoute() {
+    const h = location.hash.replace(/^#/, "");
+    if (h.startsWith("service/")) return { view: "service", id: decodeURIComponent(h.slice("service/".length)) };
+    if (h === "users") return { view: "users" };
+    return { view: "overview" };
+  }
+
+  function renderShell() {
     app.innerHTML = `
       <div class="bh-tabs">
-        <button class="bh-tab is-active" data-tab="overview">Обзор</button>
-        <button class="bh-tab" data-tab="rooms">Комнаты</button>
-        <button class="bh-tab" data-tab="logs">Логи</button>
+        <button class="bh-tab" data-tab="overview">Обзор</button>
         <button class="bh-tab" data-tab="users">Пользователи</button>
       </div>
       <div id="tabBody"></div>
     `;
     const tabs = [...app.querySelectorAll(".bh-tab")];
     const body = document.getElementById("tabBody");
+    tabs.forEach(t => t.onclick = () => { location.hash = t.dataset.tab; });
 
-    async function show(tab) {
-      tabs.forEach(t => t.classList.toggle("is-active", t.dataset.tab === tab));
+    async function render() {
+      const route = currentRoute();
+      tabs.forEach(t => t.classList.toggle("is-active", t.dataset.tab === (route.view === "service" ? null : route.view)));
       body.innerHTML = `<div class="bh-empty">Загрузка…</div>`;
       try {
-        if (tab === "overview") return renderOverview(body, initialOverview);
-        if (tab === "rooms") return renderRooms(body, initialOverview.services);
-        if (tab === "logs") return renderLogs(body, initialOverview.services);
-        if (tab === "users") return renderUsers(body);
+        if (route.view === "service") return await renderServiceDetail(body, route.id);
+        if (route.view === "users") return await renderUsers(body);
+        return await renderOverview(body);
       } catch (e) {
-        if (!(e instanceof ForbiddenError) && e.name !== "AuthRequiredError") {
-          body.innerHTML = `<div class="bh-empty">Ошибка: ${escapeHtml(e.message)}</div>`;
-        }
+        if (e instanceof ForbiddenError) return showForbiddenGate();
+        if (e.name === "AuthRequiredError") return;
+        body.innerHTML = `<div class="bh-empty">Ошибка: ${escapeHtml(e.message)}</div>`;
       }
     }
-    tabs.forEach(t => t.onclick = () => show(t.dataset.tab));
-    show("overview");
+    window.addEventListener("hashchange", render);
+    render();
   }
 
-  function renderOverview(body, data) {
+  /* ---------- Обзор ---------- */
+
+  async function renderOverview(body) {
+    const data = await api("/api/overview");
     if (!data.services.length) { body.innerHTML = `<div class="bh-empty">Сервисы не настроены (SERVICES_JSON)</div>`; return; }
     body.innerHTML = `<div class="bh-grid">${data.services.map(cardHtml).join("")}</div>`;
   }
 
   function cardHtml(s) {
     if (!s.ok) {
-      return `<div class="bh-card"><h3><span class="bh-dot down"></span>${escapeHtml(s.name)}</h3><div class="bh-error">${escapeHtml(s.error)}</div></div>`;
+      return `<a class="bh-card" href="#service/${encodeURIComponent(s.id)}">
+        <h3><span class="bh-dot down"></span>${escapeHtml(s.name)}</h3>
+        <div class="bh-error">${escapeHtml(s.error)}</div>
+      </a>`;
     }
-    const rows = Object.entries(s.stats || {}).filter(([k]) => k !== "ok").map(([k, v]) =>
+    // Сокращённый список — 5 первых показателей, остальное на странице сервиса.
+    const entries = Object.entries(s.stats || {}).filter(([k]) => k !== "ok");
+    const rows = entries.slice(0, 5).map(([k, v]) =>
       `<div class="bh-stat-row"><span>${escapeHtml(k)}</span><b>${v === null || v === undefined ? "—" : escapeHtml(String(v))}</b></div>`
     ).join("");
-    return `<div class="bh-card"><h3><span class="bh-dot ok"></span>${escapeHtml(s.name)}</h3>${rows || '<div class="bh-stat-row"><span>—</span></div>'}</div>`;
+    const more = entries.length > 5 ? `<div class="bh-stat-row"><span>ещё ${entries.length - 5}…</span></div>` : "";
+    return `<a class="bh-card" href="#service/${encodeURIComponent(s.id)}">
+      <h3><span class="bh-dot ok"></span>${escapeHtml(s.name)}</h3>
+      ${rows || '<div class="bh-stat-row"><span>—</span></div>'}${more}
+    </a>`;
   }
 
-  function logLineHtml(l) {
-    const ts = new Date(l.ts).toLocaleString("ru-RU");
-    const meta = l.meta ? " " + JSON.stringify(l.meta) : "";
-    return `<div class="bh-logline ${escapeHtml(l.level)}"><span class="ts">${ts}</span><span class="lvl">${escapeHtml(l.level)}</span><span class="msg">${escapeHtml(l.message)}${escapeHtml(meta)}</span></div>`;
-  }
+  /* ---------- Подробности сервиса: статистика + график + комнаты + логи ---------- */
 
   const ROOM_STATUS = { planning: "в планах", active: "в процессе", done: "завершена" };
+  const LOG_RANK = { info: 0, warn: 1, error: 2 };
 
-  function renderRooms(body, services) {
-    if (!services.length) { body.innerHTML = `<div class="bh-empty">Сервисы не настроены</div>`; return; }
-    body.innerHTML = `
-      <div class="bh-toolbar">
-        <select id="roomsService">${services.map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`).join("")}</select>
-        <button class="bh-btn" id="roomsRefresh">Обновить</button>
-      </div>
-      <div id="roomsList"></div>
-    `;
-    const svcSel = document.getElementById("roomsService");
-    const list = document.getElementById("roomsList");
-
-    async function load() {
-      list.innerHTML = `<div class="bh-empty">Загрузка…</div>`;
-      try {
-        const data = await api(`/api/services/${encodeURIComponent(svcSel.value)}/rooms`);
-        const rooms = data.rooms || [];
-        if (!rooms.length) { list.innerHTML = `<div class="bh-empty">Пусто</div>`; return; }
-        const rows = rooms.map(r => `
-          <tr>
-            <td>${escapeHtml(r.title || "—")}</td>
-            <td>${escapeHtml(r.destination || "—")}</td>
-            <td>${escapeHtml(ROOM_STATUS[r.status] || r.status || "—")}</td>
-            <td>${r.membersCount}</td>
-            <td>${r.placesCount}</td>
-            <td>${r.joinCode ? `<code>${escapeHtml(r.joinCode)}</code>` : "—"}</td>
-            <td>${new Date(r.createdAt).toLocaleDateString("ru-RU")}</td>
-          </tr>`).join("");
-        list.innerHTML = `
-          <table class="bh-table">
-            <thead><tr><th>Название</th><th>Направление</th><th>Статус</th><th>Участники</th><th>Мест</th><th>Код</th><th>Создана</th></tr></thead>
-            <tbody>${rows}</tbody>
-          </table>`;
-      } catch (e) {
-        // 502/upstream — обычно значит, что у сервиса просто нет /internal/rooms
-        // (пока это реализовано только у Trip).
-        list.innerHTML = `<div class="bh-empty">Недоступно для этого сервиса: ${escapeHtml(e.message)}</div>`;
-      }
+  async function renderServiceDetail(body, id) {
+    let s;
+    try {
+      s = await api(`/api/services/${encodeURIComponent(id)}/stats`);
+    } catch (e) {
+      body.innerHTML = `<a class="bh-back" href="#overview">← Обзор</a><div class="bh-empty">Не удалось загрузить: ${escapeHtml(e.message)}</div>`;
+      return;
     }
-    svcSel.onchange = load;
-    document.getElementById("roomsRefresh").onclick = load;
-    load();
-  }
 
-  function renderLogs(body, services) {
-    if (!services.length) { body.innerHTML = `<div class="bh-empty">Сервисы не настроены</div>`; return; }
     body.innerHTML = `
+      <a class="bh-back" href="#overview">← Обзор</a>
+      <div class="bh-detail-head">
+        <span class="bh-dot ${s.ok ? "ok" : "down"}"></span>
+        <h2>${escapeHtml(s.name || id)}</h2>
+      </div>
+      ${s.ok ? statsAndChartHtml(s.stats) : `<div class="bh-empty">Сервис недоступен: ${escapeHtml(s.error || "")}</div>`}
+
+      <div class="bh-section-title">Комнаты</div>
+      <div id="detailRooms"><div class="bh-empty">Загрузка…</div></div>
+
+      <div class="bh-section-title">Логи</div>
       <div class="bh-toolbar">
-        <select id="logService">${services.map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`).join("")}</select>
         <select id="logLevel">
           <option value="">Все уровни</option>
           <option value="warn">Предупреждения и ошибки</option>
@@ -187,27 +195,86 @@
       </div>
       <div class="bh-loglist" id="logList"></div>
     `;
-    const svcSel = document.getElementById("logService");
+
+    loadRooms(id);
+    wireLogs(id);
+  }
+
+  /** Числовые показатели — горизонтальным графиком, остальное (строки, null) — списком. */
+  function statsAndChartHtml(stats) {
+    const numeric = Object.entries(stats).filter(([k, v]) => k !== "ok" && typeof v === "number");
+    const rest = Object.entries(stats).filter(([k, v]) => k !== "ok" && typeof v !== "number");
+    const max = Math.max(1, ...numeric.map(([, v]) => v));
+
+    const chart = numeric.length ? `<div class="bh-chart">${numeric.map(([k, v]) => `
+      <div class="bh-chart-row">
+        <span class="label">${escapeHtml(k)}</span>
+        <span class="bar-track"><span class="bar-fill" style="width:${Math.max(2, Math.round(v / max * 100))}%"></span></span>
+        <span class="value">${escapeHtml(String(v))}</span>
+      </div>`).join("")}</div>` : "";
+
+    const restRows = rest.map(([k, v]) =>
+      `<div class="bh-stat-row"><span>${escapeHtml(k)}</span><b>${v === null || v === undefined ? "—" : escapeHtml(String(v))}</b></div>`
+    ).join("");
+    const restCard = restRows ? `<div class="bh-card">${restRows}</div>` : "";
+
+    return chart + restCard;
+  }
+
+  async function loadRooms(id) {
+    const el = document.getElementById("detailRooms");
+    try {
+      const data = await api(`/api/services/${encodeURIComponent(id)}/rooms`);
+      const rooms = data.rooms || [];
+      if (!rooms.length) { el.innerHTML = `<div class="bh-empty">Пусто</div>`; return; }
+      const rows = rooms.map(r => `
+        <tr>
+          <td>${escapeHtml(r.title || "—")}</td>
+          <td>${escapeHtml(r.destination || "—")}</td>
+          <td>${escapeHtml(ROOM_STATUS[r.status] || r.status || "—")}</td>
+          <td>${r.membersCount}</td>
+          <td>${r.placesCount}</td>
+          <td>${r.joinCode ? `<code>${escapeHtml(r.joinCode)}</code>` : "—"}</td>
+          <td>${new Date(r.createdAt).toLocaleDateString("ru-RU")}</td>
+        </tr>`).join("");
+      el.innerHTML = `
+        <table class="bh-table">
+          <thead><tr><th>Название</th><th>Направление</th><th>Статус</th><th>Участники</th><th>Мест</th><th>Код</th><th>Создана</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    } catch {
+      // Обычно значит, что у сервиса просто нет /internal/rooms (пока — только у Trip).
+      el.innerHTML = `<div class="bh-empty">Не поддерживается этим сервисом</div>`;
+    }
+  }
+
+  function logLineHtml(l) {
+    const ts = new Date(l.ts).toLocaleString("ru-RU");
+    const meta = l.meta ? " " + JSON.stringify(l.meta) : "";
+    return `<div class="bh-logline ${escapeHtml(l.level)}"><span class="ts">${ts}</span><span class="lvl">${escapeHtml(l.level)}</span><span class="msg">${escapeHtml(l.message)}${escapeHtml(meta)}</span></div>`;
+  }
+
+  function wireLogs(id) {
     const lvlSel = document.getElementById("logLevel");
     const list = document.getElementById("logList");
-    const RANK = { info: 0, warn: 1, error: 2 };
 
     async function load() {
       list.innerHTML = `<div class="bh-empty">Загрузка…</div>`;
       try {
-        const data = await api(`/api/services/${encodeURIComponent(svcSel.value)}/logs?limit=200`);
+        const data = await api(`/api/services/${encodeURIComponent(id)}/logs?limit=200`);
         let logs = data.logs || [];
-        if (lvlSel.value) logs = logs.filter(l => RANK[l.level] >= RANK[lvlSel.value]);
+        if (lvlSel.value) logs = logs.filter(l => LOG_RANK[l.level] >= LOG_RANK[lvlSel.value]);
         list.innerHTML = logs.length ? logs.map(logLineHtml).join("") : `<div class="bh-empty">Пусто</div>`;
       } catch (e) {
         list.innerHTML = `<div class="bh-empty">Ошибка: ${escapeHtml(e.message)}</div>`;
       }
     }
-    svcSel.onchange = load;
     lvlSel.onchange = load;
     document.getElementById("logRefresh").onclick = load;
     load();
   }
+
+  /* ---------- Пользователи ---------- */
 
   async function renderUsers(body) {
     const data = await api("/api/users");

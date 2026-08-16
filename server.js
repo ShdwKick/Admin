@@ -115,6 +115,16 @@ async function callService(service, urlPath, { method = "GET", body, timeout = 5
   return data;
 }
 
+/** Общее для /api/overview (все сервисы разом) и /api/services/:id/stats (один). */
+async function fetchServiceStats(service) {
+  try {
+    const stats = await callService(service, "/internal/stats");
+    return { id: service.id, name: service.name, ok: true, stats };
+  } catch (e) {
+    return { id: service.id, name: service.name, ok: false, error: e.message };
+  }
+}
+
 // ---------- HTTP-утилиты ----------
 
 function json(res, code, obj) {
@@ -186,15 +196,16 @@ const server = http.createServer(async (req, res) => {
 
       // Сводка по всем сервисам разом — параллельно, каждый может упасть отдельно.
       if (p === "/api/overview" && method === "GET") {
-        const results = await Promise.all(SERVICES.map(async service => {
-          try {
-            const stats = await callService(service, "/internal/stats");
-            return { id: service.id, name: service.name, ok: true, stats };
-          } catch (e) {
-            return { id: service.id, name: service.name, ok: false, error: e.message };
-          }
-        }));
+        const results = await Promise.all(SERVICES.map(fetchServiceStats));
         return json(res, 200, { services: results, self: { logs: selfLog.slice(-20) } });
+      }
+
+      // Тот же снимок, но для одного сервиса — страница его подробностей.
+      const statsMatch = p.match(/^\/api\/services\/([\w-]+)\/stats$/);
+      if (statsMatch && method === "GET") {
+        const service = SERVICES.find(s => s.id === statsMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        return json(res, 200, await fetchServiceStats(service));
       }
 
       const logsMatch = p.match(/^\/api\/services\/([\w-]+)\/logs$/);

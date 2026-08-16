@@ -36,17 +36,40 @@ body{
 }
 
 .bh-page{ min-height:100%; display:flex; flex-direction:column; }
-.bh-topbar{
-  display:flex; align-items:center; justify-content:space-between;
-  gap:1rem; padding:1rem 1.5rem;
+
+/* ===== Шапка — по образцу appbar «Финансов» ===== */
+.appbar{
+  position:sticky; top:0; z-index:20;
+  height:64px;
+  background:transparent; transition:background .25s, box-shadow .25s;
 }
-.bh-topbar .bh-lockup{ color:var(--ink); }
+.appbar.scrolled{
+  background:color-mix(in srgb, var(--card-bg) 88%, transparent);
+  backdrop-filter:blur(12px);
+  box-shadow:0 1px 0 var(--card-border);
+}
+.appbar-inner{
+  max-width:72rem; margin:0 auto; height:100%; padding:0 1.5rem;
+  display:flex; align-items:center; gap:.75rem;
+}
+.appbar .bh-lockup{ color:var(--ink); font-size:15px; }
+.appbar .bh-lockup .bh-mark{ width:34px; height:34px; }
+.appbar h1{ font-size:1.35rem; font-weight:600; letter-spacing:0; margin:0; line-height:1.2; }
+.appbar .sub{ font-size:.75rem; color:var(--ink-dim); margin-top:-2px; }
+.appbar .spacer{ flex:1; }
+.appbar .who-name{ font-size:.85rem; color:var(--ink-dim); }
 
-.bh-who{ display:flex; align-items:center; gap:.75rem; font-size:.9rem; color:var(--ink-dim); }
-.bh-who button{ all:unset; cursor:pointer; color:var(--ink-dim); text-decoration:underline; text-underline-offset:.2em; }
-.bh-who button:hover{ color:var(--ink); }
+.icon{ width:22px; height:22px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; flex:none; }
+.icon-btn{
+  position:relative; width:40px; height:40px; border-radius:999px;
+  border:0; background:transparent; color:var(--ink-dim);
+  cursor:pointer; display:grid; place-items:center; overflow:hidden; flex:none;
+}
+.icon-btn::after{ content:""; position:absolute; inset:0; background:currentColor; opacity:0; transition:opacity .2s; }
+.icon-btn:hover::after{ opacity:.08; }
+.icon-btn:active::after{ opacity:.12; }
 
-main{ flex:1; padding:0 1.5rem 3rem; max-width:72rem; margin:0 auto; width:100%; }
+main{ flex:1; padding:1rem 1.5rem 3rem; max-width:72rem; margin:0 auto; width:100%; }
 
 .bh-tabs{ display:flex; gap:.25rem; margin-bottom:1.5rem; border-bottom:1px solid var(--card-border); }
 .bh-tab{
@@ -69,6 +92,32 @@ main{ flex:1; padding:0 1.5rem 3rem; max-width:72rem; margin:0 auto; width:100%;
 .bh-stat-row{ display:flex; justify-content:space-between; font-size:.87rem; color:var(--ink-dim); padding:.15rem 0; }
 .bh-stat-row b{ color:var(--ink); font-weight:600; }
 .bh-card .bh-error{ color:var(--danger); font-size:.85rem; }
+
+/* Карточка сервиса на Обзоре — целиком ссылка на страницу подробностей. */
+a.bh-card{ display:block; text-decoration:none; cursor:pointer; transition:border-color .15s, transform .15s; }
+a.bh-card:hover{ border-color:color-mix(in srgb, var(--flame-tip) 45%, var(--card-border)); transform:translateY(-1px); }
+
+.bh-back{
+  display:inline-flex; align-items:center; gap:.35rem; margin-bottom:1rem;
+  color:var(--ink-dim); text-decoration:none; font-size:.88rem; background:none; border:0; cursor:pointer; padding:0;
+}
+.bh-back:hover{ color:var(--ink); }
+
+.bh-detail-head{ display:flex; align-items:center; gap:.75rem; margin-bottom:1.25rem; flex-wrap:wrap; }
+.bh-detail-head h2{ margin:0; font-size:1.3rem; }
+
+.bh-section-title{
+  font-size:.8rem; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-dim);
+  margin:2rem 0 .75rem; padding-top:1.25rem; border-top:1px solid var(--card-border);
+}
+.bh-section-title:first-of-type{ margin-top:0; padding-top:0; border-top:0; }
+
+.bh-chart{ display:flex; flex-direction:column; gap:.4rem; margin:.5rem 0 1rem; }
+.bh-chart-row{ display:grid; grid-template-columns:9rem 1fr 3rem; align-items:center; gap:.6rem; font-size:.82rem; }
+.bh-chart-row .label{ color:var(--ink-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.bh-chart-row .bar-track{ background:color-mix(in srgb, var(--card-border) 70%, transparent); border-radius:.3rem; height:.6rem; overflow:hidden; }
+.bh-chart-row .bar-fill{ height:100%; background:linear-gradient(90deg, var(--flame-base), var(--flame-tip)); border-radius:.3rem; }
+.bh-chart-row .value{ text-align:right; color:var(--ink); font-weight:600; }
 
 .bh-toolbar{ display:flex; flex-wrap:wrap; gap:.6rem; align-items:center; margin-bottom:1rem; }
 select, input[type="text"]{
