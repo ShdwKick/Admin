@@ -283,6 +283,8 @@
         <td>${escapeHtml(u.username)}${u.id === user.id ? ' <span class="bh-badge">это вы</span>' : ""}</td>
         <td>${escapeHtml(u.email || "—")}</td>
         <td>${u.admin ? '<span class="bh-badge admin">админ</span>' : ""}${u.disabled ? ' <span class="bh-badge disabled">заблокирован</span>' : ""}</td>
+        <td>${u.createdAt ? new Date(u.createdAt).toLocaleDateString("ru-RU") : "—"}</td>
+        <td>${u.lastSeen ? new Date(u.lastSeen).toLocaleString("ru-RU") : "никогда"}</td>
         <td>
           <button class="bh-btn" data-action="admin" data-on="${u.admin ? "0" : "1"}" ${u.id === user.id ? "disabled" : ""}>${u.admin ? "Забрать доступ" : "Сделать админом"}</button>
           <button class="bh-btn" data-action="disabled" data-on="${u.disabled ? "0" : "1"}" ${u.id === user.id ? "disabled" : ""}>${u.disabled ? "Разблокировать" : "Заблокировать"}</button>
@@ -292,7 +294,7 @@
       </tr>`).join("");
 
     body.innerHTML = rows
-      ? `<table class="bh-table"><thead><tr><th>Логин</th><th>Почта</th><th>Статус</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+      ? `<table class="bh-table"><thead><tr><th>Логин</th><th>Почта</th><th>Статус</th><th>Регистрация</th><th>Активность</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
       : `<div class="bh-empty">Пользователей нет</div>`;
 
     // Удаление безвозвратно и задевает данные во всех сервисах сразу — обычного
