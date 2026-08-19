@@ -55,6 +55,7 @@ body{
 .appbar .bh-lockup{ color:var(--ink); font-size:15px; }
 .appbar .bh-lockup .bh-mark{ width:34px; height:34px; }
 .appbar h1{ font-size:1.35rem; font-weight:600; letter-spacing:0; margin:0; line-height:1.2; }
+.appbar h1 a{ color:inherit; text-decoration:none; }
 .appbar .sub{ font-size:.75rem; color:var(--ink-dim); margin-top:-2px; }
 .appbar .spacer{ flex:1; }
 .appbar .who-name{ font-size:.85rem; color:var(--ink-dim); }
