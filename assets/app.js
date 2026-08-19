@@ -119,6 +119,7 @@
       // wireLibraryScan), иначе таймер продолжит дёргать api() и писать в
       // #libraryScan, которого уже нет в DOM после следующего innerHTML.
       if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
+      if (logTimer) { clearInterval(logTimer); logTimer = null; }
       const route = currentRoute();
       tabs.forEach(t => t.classList.toggle("is-active", t.dataset.tab === (route.view === "service" ? null : route.view)));
       body.innerHTML = `<div class="bh-empty">Загрузка…</div>`;
@@ -171,6 +172,9 @@
   // wireLibraryScan) — один на всё приложение, чистится в render() выше при
   // уходе со страницы сервиса.
   let scanTimer = null;
+  // Таймер автообновления логов (см. wireLogs) — так же один на всё
+  // приложение и чистится в render() при уходе со страницы сервиса.
+  let logTimer = null;
 
   async function renderServiceDetail(body, id) {
     let s;
@@ -203,6 +207,16 @@
           <option value="error">Только ошибки</option>
         </select>
         <button class="bh-btn" id="logRefresh">Обновить</button>
+        <label class="bh-check">
+          <input type="checkbox" id="logAuto">
+          Автообновление
+        </label>
+        <select id="logAutoInterval">
+          <option value="5000">5 с</option>
+          <option value="10000" selected>10 с</option>
+          <option value="30000">30 с</option>
+          <option value="60000">60 с</option>
+        </select>
       </div>
       <div class="bh-loglist" id="logList"></div>
     `;
@@ -354,6 +368,8 @@
   function wireLogs(id) {
     const lvlSel = document.getElementById("logLevel");
     const list = document.getElementById("logList");
+    const autoBox = document.getElementById("logAuto");
+    const intervalSel = document.getElementById("logAutoInterval");
 
     async function load() {
       list.innerHTML = `<div class="bh-empty">Загрузка…</div>`;
@@ -366,8 +382,17 @@
         list.innerHTML = `<div class="bh-empty">Ошибка: ${escapeHtml(e.message)}</div>`;
       }
     }
+    // Автообновление — тот же принцип, что и в wireLibraryScan: один общий
+    // logTimer, перезапускаем при смене чекбокса/интервала, глушим в render()
+    // при уходе со страницы сервиса.
+    function restartAuto() {
+      if (logTimer) { clearInterval(logTimer); logTimer = null; }
+      if (autoBox.checked) logTimer = setInterval(load, parseInt(intervalSel.value, 10));
+    }
     lvlSel.onchange = load;
     document.getElementById("logRefresh").onclick = load;
+    autoBox.onchange = restartAuto;
+    intervalSel.onchange = restartAuto;
     load();
   }
 

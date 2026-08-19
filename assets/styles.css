@@ -125,6 +125,7 @@ select, input[type="text"], input[type="number"]{
   border-radius:.5rem; padding:.4rem .6rem; font:inherit;
 }
 input.bh-input-narrow{ width:8em; }
+.bh-check{ display:inline-flex; align-items:center; gap:.4rem; cursor:pointer; font-size:.85rem; color:var(--ink-dim); }
 button.bh-btn{
   all:unset; cursor:pointer; padding:.4rem .8rem; border-radius:.5rem; font-size:.85rem;
   background:color-mix(in srgb, var(--flame-tip) 16%, transparent); color:var(--ink);
