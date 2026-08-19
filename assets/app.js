@@ -115,6 +115,10 @@
     tabs.forEach(t => t.onclick = () => { location.hash = t.dataset.tab; });
 
     async function render() {
+      // Уходим со страницы сервиса — глушим поллинг скана библиотеки (см.
+      // wireLibraryScan), иначе таймер продолжит дёргать api() и писать в
+      // #libraryScan, которого уже нет в DOM после следующего innerHTML.
+      if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
       const route = currentRoute();
       tabs.forEach(t => t.classList.toggle("is-active", t.dataset.tab === (route.view === "service" ? null : route.view)));
       body.innerHTML = `<div class="bh-empty">Загрузка…</div>`;
@@ -163,6 +167,10 @@
 
   const ROOM_STATUS = { planning: "в планах", active: "в процессе", done: "завершена" };
   const LOG_RANK = { info: 0, warn: 1, error: 2 };
+  // Таймер поллинга статуса скана библиотеки, пока он идёт (см.
+  // wireLibraryScan) — один на всё приложение, чистится в render() выше при
+  // уходе со страницы сервиса.
+  let scanTimer = null;
 
   async function renderServiceDetail(body, id) {
     let s;
@@ -184,6 +192,9 @@
       <div class="bh-section-title">Комнаты</div>
       <div id="detailRooms"><div class="bh-empty">Загрузка…</div></div>
 
+      <div class="bh-section-title">Библиотека</div>
+      <div id="libraryScan"><div class="bh-empty">Загрузка…</div></div>
+
       <div class="bh-section-title">Логи</div>
       <div class="bh-toolbar">
         <select id="logLevel">
@@ -197,6 +208,7 @@
     `;
 
     loadRooms(id);
+    wireLibraryScan(id);
     wireLogs(id);
   }
 
@@ -246,6 +258,91 @@
       // Обычно значит, что у сервиса просто нет /internal/rooms (пока — только у Trip).
       el.innerHTML = `<div class="bh-empty">Не поддерживается этим сервисом</div>`;
     }
+  }
+
+  /** Расширение библиотеки диапазоном kinopoisk_id (сейчас есть только у
+      Movies, см. её server.js) — форма запуска/остановки + прогресс, который
+      сам себя переопрашивает раз в 5с, пока скан идёт (см. scanTimer). */
+  const SCAN_STATUS = {
+    idle: "не запускался", running: "идёт", paused_quota: "пауза — дневная квота исчерпана",
+    done: "готово", stopped: "остановлен",
+  };
+
+  function libraryScanProgressHtml(data) {
+    const total = data.toId != null ? data.toId - data.fromId + 1 : 0;
+    const passed = data.status !== "idle" ? Math.min(data.nextId - data.fromId, total) : 0;
+    const rows = data.status !== "idle" ? `
+      <div class="bh-stat-row"><span>Диапазон</span><b>${data.fromId}–${data.toId}</b></div>
+      <div class="bh-stat-row"><span>Статус</span><b>${escapeHtml(SCAN_STATUS[data.status] || data.status)}</b></div>
+      <div class="bh-stat-row"><span>Пройдено</span><b>${passed} / ${total}</b></div>
+      <div class="bh-stat-row"><span>Добавлено</span><b>${data.added}</b></div>
+      <div class="bh-stat-row"><span>Уже были в кэше</span><b>${data.cached}</b></div>
+      <div class="bh-stat-row"><span>Не найдено</span><b>${data.notFound}</b></div>
+      <div class="bh-stat-row"><span>Ошибок</span><b>${data.errors}</b></div>
+    ` : "";
+    return rows + `<div class="bh-stat-row"><span>Квота на скан/импорт сегодня</span><b>${escapeHtml(data.apiUsage)}</b></div>`;
+  }
+
+  async function wireLibraryScan(id) {
+    const el = document.getElementById("libraryScan");
+    // Форма строится один раз, дальше поллинг (см. poll ниже) обновляет
+    // только #scanProgress — если перерисовывать весь блок целиком каждые 5с,
+    // это стирало бы то, что админ как раз набирает в scanFrom/scanTo для
+    // следующего запуска.
+    el.innerHTML = `
+      <div class="bh-card" id="scanProgress"><div class="bh-empty">Загрузка…</div></div>
+      <div class="bh-toolbar">
+        <input type="number" class="bh-input-narrow" id="scanFrom" placeholder="От id" min="1">
+        <input type="number" class="bh-input-narrow" id="scanTo" placeholder="До id" min="1">
+        <button class="bh-btn" id="scanStart">Запустить</button>
+        <button class="bh-btn danger" id="scanStop" disabled>Остановить</button>
+      </div>
+    `;
+    const progressEl = document.getElementById("scanProgress");
+    const stopBtn = document.getElementById("scanStop");
+    let last = null; // последний известный статус — для confirm() при перезапуске
+
+    async function poll() {
+      let data;
+      try {
+        data = await api(`/api/services/${encodeURIComponent(id)}/library/scan`);
+      } catch {
+        // Как и с комнатами — сервис просто не реализует /internal/library/scan.
+        el.innerHTML = `<div class="bh-empty">Не поддерживается этим сервисом</div>`;
+        if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
+        return;
+      }
+      last = data;
+      progressEl.innerHTML = libraryScanProgressHtml(data);
+      const running = data.status === "running";
+      stopBtn.disabled = !running;
+      // Поллинг только пока реально что-то происходит — «готово»/«остановлен»/
+      // «пауза на квоте» сами по себе не изменятся без нового запуска.
+      if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
+      if (running) scanTimer = setInterval(poll, 5000);
+    }
+
+    document.getElementById("scanStart").onclick = async () => {
+      const from = parseInt(document.getElementById("scanFrom").value, 10);
+      const to = parseInt(document.getElementById("scanTo").value, 10);
+      if (!Number.isFinite(from) || !Number.isFinite(to) || from < 1 || to < from) {
+        alert("Нужны целые kinopoisk_id, «от» ≤ «до».");
+        return;
+      }
+      if (last && last.status === "running" && !confirm(`Скан уже идёт (${last.fromId}–${last.toId}). Запустить новый диапазон ${from}–${to}? Прогресс текущего скана потеряется.`)) return;
+      try {
+        await api(`/api/services/${encodeURIComponent(id)}/library/scan`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ from, to }),
+        });
+        await poll();
+      } catch (e) { alert("Не получилось: " + e.message); }
+    };
+    document.getElementById("scanStop").onclick = async () => {
+      try { await api(`/api/services/${encodeURIComponent(id)}/library/scan/stop`, { method: "POST" }); await poll(); }
+      catch (e) { alert("Не получилось: " + e.message); }
+    };
+
+    await poll();
   }
 
   function logLineHtml(l) {

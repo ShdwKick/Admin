@@ -237,6 +237,37 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      // Расширение библиотеки диапазоном kinopoisk_id (сейчас реализовано
+      // только у Movies, см. её server.js /internal/library/scan) — тот же
+      // принцип, что у /rooms выше: не все сервисы это умеют, тогда просто
+      // 404 от сервиса уходит наверх как upstream-ошибка, фронт прячет блок.
+      const scanMatch = p.match(/^\/api\/services\/([\w-]+)\/library\/scan$/);
+      if (scanMatch && (method === "GET" || method === "POST")) {
+        const service = SERVICES.find(s => s.id === scanMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        try {
+          if (method === "GET") return json(res, 200, await callService(service, "/internal/library/scan"));
+          const body = await readJsonBody(req);
+          const data = await callService(service, "/internal/library/scan", { method: "POST", body });
+          logSelf("info", "Admin-действие: запуск скана библиотеки", { service: service.id, by: admin.username, from: body.from, to: body.to });
+          return json(res, 200, data);
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+      const scanStopMatch = p.match(/^\/api\/services\/([\w-]+)\/library\/scan\/stop$/);
+      if (scanStopMatch && method === "POST") {
+        const service = SERVICES.find(s => s.id === scanStopMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        try {
+          const data = await callService(service, "/internal/library/scan/stop", { method: "POST" });
+          logSelf("info", "Admin-действие: остановка скана библиотеки", { service: service.id, by: admin.username });
+          return json(res, 200, data);
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+
       // Управление пользователями — только через auth, остальные сервисы своих не ведут.
       if (p === "/api/users" && method === "GET") {
         if (!AUTH_SERVICE) return json(res, 501, { error: "auth_not_configured" });
