@@ -202,6 +202,7 @@
 
       <div class="bh-section-title">Библиотека</div>
       <div id="libraryScan"><div class="bh-empty">Загрузка…</div></div>
+      <div id="detailQueue"></div>
       <div id="movieDelete"></div>
 
       <div class="bh-section-title">Логи</div>
@@ -228,6 +229,7 @@
 
     loadRooms(id);
     wireLibraryScan(id);
+    loadDetailQueue(id);
     wireMovieDelete(id);
     wireLogs(id);
   }
@@ -363,6 +365,38 @@
     };
 
     await poll();
+  }
+
+  /** Очередь докачки деталей фильмов, добавленных расширением импорта без
+      квоты (см. Movies server.js /internal/movies/detail-queue) — видимость
+      + ручное «Обновить»: очередь тикает раз в 15 минут сама по себе (см.
+      drainMovieDetailQueue), гонять автополлинг под этот темп смысла нет
+      (как у скана библиотеки, где реально что-то меняется каждые
+      секунды) — но без кнопки счётчик выглядел бы «зависшим» до перезахода
+      на страницу целиком, а после этой правки в Movies тот же вопрос уже
+      закрыт логами (см. «Логи» ниже — «Очередь деталей: ждёт квоту» / «…
+      докатил партию» на каждый тик). */
+  async function loadDetailQueue(id) {
+    const el = document.getElementById("detailQueue");
+    async function render() {
+      try {
+        const data = await api(`/api/services/${encodeURIComponent(id)}/movies/detail-queue`);
+        el.innerHTML = `
+          <div class="bh-card">
+            <div class="bh-stat-row"><span>Очередь докачки деталей</span><b>${data.pending}</b></div>
+            ${data.pending ? `<div class="bh-stat-row"><span>Старейшая заявка</span><b>${new Date(data.oldestRequestedAt).toLocaleString("ru-RU")}</b></div>` : ""}
+            <div class="bh-stat-row"><span>Квота на скан/импорт сегодня</span><b>${escapeHtml(data.apiUsage)}</b></div>
+          </div>
+          <div class="bh-toolbar">
+            <button class="bh-btn" id="detailQueueRefresh">Обновить</button>
+          </div>`;
+        document.getElementById("detailQueueRefresh").onclick = render;
+      } catch {
+        // Как и с комнатами — сервис просто не реализует /internal/movies/detail-queue.
+        el.innerHTML = "";
+      }
+    }
+    await render();
   }
 
   /** Удаление фильма из библиотеки по kinopoisk_id (сейчас есть только у

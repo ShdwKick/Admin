@@ -296,6 +296,20 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      // Очередь докачки деталей фильмов от импорта из расширения (см.
+      // Movies server.js /internal/movies/detail-queue) — только видимость,
+      // управлять тут нечем, очередь дренится сама по тику.
+      const detailQueueMatch = p.match(/^\/api\/services\/([\w-]+)\/movies\/detail-queue$/);
+      if (detailQueueMatch && method === "GET") {
+        const service = SERVICES.find(s => s.id === detailQueueMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        try {
+          return json(res, 200, await callService(service, "/internal/movies/detail-queue"));
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+
       // Управление пользователями — только через auth, остальные сервисы своих не ведут.
       if (p === "/api/users" && method === "GET") {
         if (!AUTH_SERVICE) return json(res, 501, { error: "auth_not_configured" });
