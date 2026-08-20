@@ -111,7 +111,14 @@ async function callService(service, urlPath, { method = "GET", body, timeout = 5
   const text = await res.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { /* сервис ответил не JSON-ом */ }
-  if (!res.ok) throw new Error(`${service.id}: HTTP ${res.status}${data && data.error ? " (" + data.error + ")" : ""}`);
+  // data.message — человекочитаемая причина (напр. «фильм используется в N
+  // комнатах», см. Movies /internal/movies/:id) — без неё код ошибки
+  // (data.error) долетал бы до админа голым, а сам текст, ради которого
+  // сервис вообще прислал 4xx/5xx, терялся.
+  if (!res.ok) {
+    const detail = data && data.message ? " — " + data.message : (data && data.error ? " (" + data.error + ")" : "");
+    throw new Error(`${service.id}: HTTP ${res.status}${detail}`);
+  }
   return data;
 }
 
@@ -262,6 +269,27 @@ const server = http.createServer(async (req, res) => {
         try {
           const data = await callService(service, "/internal/library/scan/stop", { method: "POST" });
           logSelf("info", "Admin-действие: остановка скана библиотеки", { service: service.id, by: admin.username });
+          return json(res, 200, data);
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+
+      // Карточка фильма + удаление из библиотеки (сейчас реализовано только
+      // у Movies, см. её server.js /internal/movies/:id) — тот же принцип,
+      // что у library/scan выше: не все сервисы это умеют, 404 от сервиса
+      // уходит наверх как upstream-ошибка. GET — посмотреть, что удаляем
+      // (название + счётчики использования), DELETE — сама отдача может
+      // прийти 409 «используется», это не баг прокси — см. callService,
+      // причина долетает в e.message.
+      const movieMatch = p.match(/^\/api\/services\/([\w-]+)\/movies\/(\d+)$/);
+      if (movieMatch && (method === "GET" || method === "DELETE")) {
+        const service = SERVICES.find(s => s.id === movieMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        const kpId = movieMatch[2];
+        try {
+          const data = await callService(service, `/internal/movies/${kpId}`, { method });
+          if (method === "DELETE") logSelf("info", "Admin-действие: удаление фильма из библиотеки", { service: service.id, by: admin.username, kinopoiskId: kpId });
           return json(res, 200, data);
         } catch (e) {
           return json(res, 502, { error: "upstream", message: e.message });

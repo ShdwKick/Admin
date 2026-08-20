@@ -202,6 +202,7 @@
 
       <div class="bh-section-title">Библиотека</div>
       <div id="libraryScan"><div class="bh-empty">Загрузка…</div></div>
+      <div id="movieDelete"></div>
 
       <div class="bh-section-title">Логи</div>
       <div class="bh-toolbar">
@@ -227,6 +228,7 @@
 
     loadRooms(id);
     wireLibraryScan(id);
+    wireMovieDelete(id);
     wireLogs(id);
   }
 
@@ -361,6 +363,61 @@
     };
 
     await poll();
+  }
+
+  /** Удаление фильма из библиотеки по kinopoisk_id (сейчас есть только у
+      Movies, см. её server.js /internal/movies/:id) — «Найти» показывает
+      название и счётчики использования ПЕРЕД удалением: и чтобы админ не
+      удалял вслепую по голому id, и потому что сам сервис откажет (409),
+      если фильм где-то используется (в очереди/истории комнаты, у кого-то
+      оценён, лежит в чьём-то личном списке) — тут это видно заранее, а не
+      только из текста ошибки. */
+  async function wireMovieDelete(id) {
+    const el = document.getElementById("movieDelete");
+    el.innerHTML = `
+      <div class="bh-toolbar">
+        <input type="number" class="bh-input-narrow" id="movieDeleteId" placeholder="kinopoisk_id" min="1">
+        <button class="bh-btn" id="movieDeleteFind">Найти</button>
+      </div>
+      <div class="bh-card" id="movieDeleteResult" hidden></div>
+    `;
+    const resultEl = document.getElementById("movieDeleteResult");
+
+    document.getElementById("movieDeleteFind").onclick = async () => {
+      const kpId = parseInt(document.getElementById("movieDeleteId").value, 10);
+      if (!Number.isFinite(kpId) || kpId < 1) { alert("Нужен целый kinopoisk_id."); return; }
+      resultEl.hidden = false;
+      resultEl.innerHTML = `<div class="bh-empty">Загрузка…</div>`;
+      let data;
+      try {
+        data = await api(`/api/services/${encodeURIComponent(id)}/movies/${kpId}`);
+      } catch (e) {
+        resultEl.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+        return;
+      }
+      const u = data.usage || { rooms: 0, marks: 0, personalList: 0 };
+      const inUse = u.rooms > 0 || u.marks > 0 || u.personalList > 0;
+      resultEl.innerHTML = `
+        <div class="bh-stat-row"><span>Фильм</span><b>${escapeHtml(data.title || "—")}${data.year ? " (" + data.year + ")" : ""}</b></div>
+        <div class="bh-stat-row"><span>В очередях/истории комнат</span><b>${u.rooms}</b></div>
+        <div class="bh-stat-row"><span>Оценок/просмотров</span><b>${u.marks}</b></div>
+        <div class="bh-stat-row"><span>В личных списках</span><b>${u.personalList}</b></div>
+        ${inUse ? `<div class="bh-error">Используется — сначала уберите из комнат/списков, потом удаляйте.</div>` : ""}
+        <div class="bh-toolbar" style="margin-bottom:0;margin-top:.6rem">
+          <button class="bh-btn danger" id="movieDeleteBtn" ${inUse ? "disabled" : ""}>Удалить из библиотеки</button>
+        </div>
+      `;
+      document.getElementById("movieDeleteBtn").onclick = async () => {
+        if (!confirm(`Удалить «${data.title}»${data.year ? " (" + data.year + ")" : ""} из библиотеки? Действие необратимо.`)) return;
+        try {
+          await api(`/api/services/${encodeURIComponent(id)}/movies/${kpId}`, { method: "DELETE" });
+          resultEl.hidden = true;
+          document.getElementById("movieDeleteId").value = "";
+        } catch (e) {
+          alert("Не получилось: " + e.message);
+        }
+      };
+    };
   }
 
   function logLineHtml(l) {
