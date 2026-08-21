@@ -449,8 +449,13 @@
       исчерпании текущего (см. poiskkino.js). Только видимость, тем же
       принципом, что у loadDetailQueue/loadRooms — один запрос при заходе на
       страницу плюс ручное «Обновить», без автополлинга. Значения самих
-      ключей сервис не отдаёт вовсе (см. keysStatus в poiskkino.js) — тут
-      только индекс и счётчик. */
+      ключей сервис не отдаёт вовсе — тут только индекс и счётчики.
+      k.live — настоящие цифры от САМОГО provider'а (GET /v1.5/token, лимит
+      не тратит), k.calls/k.cap — наша локальная оценка (может отличаться от
+      реального тарифа ключа, отсюда и live рядом: раньше только по локальной
+      оценке казалось, что запас есть, а provider уже отвечал 403). Если
+      live не пришёл (k.liveError) — ключ невалиден или provider недоступен
+      прямо сейчас, показываем сообщение вместо цифр. */
   async function loadPoiskkinoKeys(id) {
     const el = document.getElementById("poiskkinoKeys");
     async function render() {
@@ -464,9 +469,18 @@
       }
       if (!data.enabled || !data.keys.length) { el.innerHTML = ""; return; }
       const rows = data.keys.map(k => {
-        const exhausted = k.calls >= k.cap;
-        return `<div class="bh-stat-row"><span>Ключ ${k.index + 1}${exhausted ? " — исчерпан" : ""}</span><b>${k.calls}/${k.cap}</b></div>`;
-      }).join("");
+        const live = k.live;
+        const exhausted = live ? live.requestsRemaining <= 0 : k.calls >= k.cap;
+        const resetAt = live && (live.resetAt || live.ttl != null)
+          ? new Date(live.resetAt || (Date.now() + live.ttl * 1000)).toLocaleString("ru-RU")
+          : null;
+        const liveLine = live
+          ? `<div class="bh-stat-row"><span>У provider'а</span><b>${live.requestsUsed}/${live.requestsLimit}${resetAt ? `, сброс ${escapeHtml(resetAt)}` : ""}</b></div>`
+          : `<div class="bh-stat-row"><span>У provider'а</span><span>${k.liveError ? `не удалось проверить: ${escapeHtml(k.liveError)}` : "—"}</span></div>`;
+        return `
+          <div class="bh-stat-row"><span>Ключ ${k.index + 1}${exhausted ? " — исчерпан" : ""}</span><b>наша оценка ${k.calls}/${k.cap}</b></div>
+          ${liveLine}`;
+      }).join("<hr style=\"border-color:var(--card-border);margin:.4rem 0\">");
       el.innerHTML = `
         <div class="bh-card">${rows}</div>
         <div class="bh-toolbar">
