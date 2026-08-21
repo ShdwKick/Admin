@@ -324,6 +324,47 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      // Подборки (см. Movies server.js /internal/collections*) — импорт с
+      // Кинопоиска целиком, список уже заведённых, удаление.
+      const collectionsMatch = p.match(/^\/api\/services\/([\w-]+)\/collections$/);
+      if (collectionsMatch && method === "GET") {
+        const service = SERVICES.find(s => s.id === collectionsMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        try {
+          return json(res, 200, await callService(service, "/internal/collections"));
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+      const collectionsImportMatch = p.match(/^\/api\/services\/([\w-]+)\/collections\/import$/);
+      if (collectionsImportMatch && method === "POST") {
+        const service = SERVICES.find(s => s.id === collectionsImportMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        try {
+          const body = await readJsonBody(req);
+          // Собирает всю подборку синхронно (постранично, но недорого — до
+          // 250 фильмов за вызов) — таймаут дефолтных 5с у callService мал
+          // для этого конкретного вызова, поднимаем отдельно.
+          const data = await callService(service, "/internal/collections/import", { method: "POST", body, timeout: 20000 });
+          logSelf("info", "Admin-действие: импорт подборки", { service: service.id, by: admin.username, slug: body.slug });
+          return json(res, 200, data);
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+      const collectionDeleteMatch = p.match(/^\/api\/services\/([\w-]+)\/collections\/([\w-]+)$/);
+      if (collectionDeleteMatch && method === "DELETE") {
+        const service = SERVICES.find(s => s.id === collectionDeleteMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        try {
+          const data = await callService(service, `/internal/collections/${encodeURIComponent(collectionDeleteMatch[2])}`, { method: "DELETE" });
+          logSelf("info", "Admin-действие: удаление подборки", { service: service.id, by: admin.username, collectionId: collectionDeleteMatch[2] });
+          return json(res, 200, data);
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+
       // Управление пользователями — только через auth, остальные сервисы своих не ведут.
       if (p === "/api/users" && method === "GET") {
         if (!AUTH_SERVICE) return json(res, 501, { error: "auth_not_configured" });

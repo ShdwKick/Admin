@@ -205,6 +205,7 @@
       <div id="detailQueue"></div>
       <div id="poiskkinoKeys"></div>
       <div id="movieDelete"></div>
+      <div id="collectionImport"></div>
 
       <div class="bh-section-title">Логи</div>
       <div class="bh-toolbar">
@@ -233,6 +234,7 @@
     loadDetailQueue(id);
     loadPoiskkinoKeys(id);
     wireMovieDelete(id);
+    wireCollectionImport(id);
     wireLogs(id);
   }
 
@@ -488,6 +490,86 @@
         }
       };
     };
+  }
+
+  /** Импорт подборки Кинопоиска целиком в библиотеку (см. Movies server.js
+      /internal/collections/import — POST собирает список подборки
+      синхронно, детали каждого фильма докатываются фоном через уже
+      существующую очередь деталей, см. её виджет выше). Список уже
+      импортированных — снизу, с удалением (саму группировку, фильмы из
+      библиотеки не трогает — см. подсказку у кнопки). */
+  async function wireCollectionImport(id) {
+    const el = document.getElementById("collectionImport");
+    el.innerHTML = `
+      <div class="bh-toolbar">
+        <input type="text" class="bh-input-narrow" id="collectionImportSlug" placeholder="slug, напр. top250">
+        <button class="bh-btn" id="collectionImportBtn">Импортировать с Кинопоиска</button>
+      </div>
+      <div id="collectionImportResult"></div>
+      <div id="collectionsListBox"><div class="bh-empty">Загрузка…</div></div>
+    `;
+    const resultEl = document.getElementById("collectionImportResult");
+    const listBox = document.getElementById("collectionsListBox");
+
+    async function loadList() {
+      let data;
+      try {
+        data = await api(`/api/services/${encodeURIComponent(id)}/collections`);
+      } catch (e) {
+        listBox.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+        return;
+      }
+      const rows = data.collections || [];
+      if (!rows.length) { listBox.innerHTML = `<div class="bh-empty">Пока ничего не импортировано</div>`; return; }
+      listBox.innerHTML = `
+        <table class="bh-table">
+          <thead><tr><th>Название</th><th>Slug</th><th>Источник</th><th>Фильмов</th><th>Обновлено</th><th></th></tr></thead>
+          <tbody>${rows.map(c => `
+            <tr data-id="${escapeHtml(c.id)}">
+              <td>${escapeHtml(c.name)}</td>
+              <td><code>${escapeHtml(c.slug)}</code></td>
+              <td>${c.source === "kinopoisk" ? "Кинопоиск" : "Своя"}</td>
+              <td>${c.moviesCount}</td>
+              <td>${new Date(c.updatedAt).toLocaleDateString("ru-RU")}</td>
+              <td><button class="bh-btn danger" data-action="delete">Удалить</button></td>
+            </tr>`).join("")}</tbody>
+        </table>`;
+      listBox.querySelectorAll("button[data-action='delete']").forEach(btn => {
+        btn.onclick = async () => {
+          const tr = btn.closest("tr");
+          const cid = tr.dataset.id;
+          const name = tr.querySelector("td").textContent;
+          if (!confirm(`Удалить подборку «${name}» из библиотеки? Сами фильмы останутся в кэше, удаляется только группировка.`)) return;
+          try {
+            await api(`/api/services/${encodeURIComponent(id)}/collections/${encodeURIComponent(cid)}`, { method: "DELETE" });
+            await loadList();
+          } catch (e) { alert("Не получилось: " + e.message); }
+        };
+      });
+    }
+
+    document.getElementById("collectionImportBtn").onclick = async () => {
+      const slug = document.getElementById("collectionImportSlug").value.trim();
+      if (!slug) { alert("Укажите slug подборки — например top250."); return; }
+      resultEl.innerHTML = `<div class="bh-empty">Импортирую…</div>`;
+      try {
+        const data = await api(`/api/services/${encodeURIComponent(id)}/collections/import`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slug }),
+        });
+        resultEl.innerHTML = `
+          <div class="bh-card">
+            <div class="bh-stat-row"><span>${escapeHtml(data.name)}</span><b>${data.moviesCount} фильмов</b></div>
+            <div class="bh-stat-row"><span>Уже были детали</span><b>${data.alreadyCached}</b></div>
+            <div class="bh-stat-row"><span>Поставлено в очередь докачки</span><b>${data.queued}</b></div>
+          </div>`;
+        document.getElementById("collectionImportSlug").value = "";
+        await loadList();
+      } catch (e) {
+        resultEl.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+      }
+    };
+
+    await loadList();
   }
 
   function logLineHtml(l) {
