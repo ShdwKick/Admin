@@ -79,6 +79,10 @@ main{ flex:1; padding:1rem 1.5rem 3rem; max-width:72rem; margin:0 auto; width:10
 }
 .bh-tab:hover{ color:var(--ink); }
 .bh-tab.is-active{ color:var(--ink); border-bottom-color:var(--flame-tip); }
+/* Подвкладки страницы сервиса (Комнаты/Библиотека/Логи) — те же .bh-tab,
+   но с меньшим отступом снизу: это вторичная навигация под шапкой сервиса,
+   не первого уровня, как «Обзор»/«Пользователи». */
+.bh-subtabs{ margin-top:1.5rem; margin-bottom:1.25rem; }
 
 .bh-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(15rem,1fr)); gap:1rem; }
 

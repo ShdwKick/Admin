@@ -6,12 +6,15 @@
  * (см. Auth/INTEGRATION.md — claim admin проверяется на бэкенде, не на фронте).
  *
  * Навигация — хэш, как у Movies/Trip ("SPA с маршрутизацией по хэшу"):
- *   #overview        — сетка карточек сервисов (по умолчанию)
- *   #users           — управление пользователями
- *   #service/<id>    — подробности одного сервиса: статистика, график,
- *                       комнаты (если сервис их отдаёт) и логи — раньше это
- *                       были отдельные вкладки «Комнаты»/«Логи» на все сервисы
- *                       разом, теперь всё в одном месте на своём сервисе.
+ *   #overview            — сетка карточек сервисов (по умолчанию)
+ *   #users               — управление пользователями
+ *   #service/<id>/<tab>  — подробности одного сервиса: статистика (всегда
+ *                           видна) + подвкладки rooms/library/logs
+ *                           (см. DETAIL_TABS) — раньше все три шли одним
+ *                           длинным списком на странице сервиса, но когда у
+ *                           Movies под «Библиотекой» набралось пять разных
+ *                           инструментов, читать это стало неудобно.
+ *                           <tab> необязателен и по умолчанию — rooms.
  */
 (async function () {
   const app = document.getElementById("app");
@@ -101,6 +104,11 @@
   // Таймер автообновления логов (см. wireLogs) — так же один на всё
   // приложение и чистится в render() при уходе со страницы сервиса.
   let logTimer = null;
+  // Список подвкладок страницы сервиса (см. renderServiceDetail) — тоже
+  // нужен ДО renderShell(): на него ссылается currentRoute(), которую
+  // render() вызывает синхронно при первом заходе, ещё до объявления
+  // const дальше по файлу.
+  const DETAIL_TABS = ["rooms", "library", "logs"];
 
   renderShell();
 
@@ -108,7 +116,13 @@
 
   function currentRoute() {
     const h = location.hash.replace(/^#/, "");
-    if (h.startsWith("service/")) return { view: "service", id: decodeURIComponent(h.slice("service/".length)) };
+    if (h.startsWith("service/")) {
+      const rest = decodeURIComponent(h.slice("service/".length));
+      const slash = rest.indexOf("/");
+      const id = slash === -1 ? rest : rest.slice(0, slash);
+      const tab = slash === -1 ? "" : rest.slice(slash + 1);
+      return { view: "service", id, tab: DETAIL_TABS.includes(tab) ? tab : "rooms" };
+    }
     if (h === "users") return { view: "users" };
     return { view: "overview" };
   }
@@ -135,7 +149,7 @@
       tabs.forEach(t => t.classList.toggle("is-active", t.dataset.tab === (route.view === "service" ? null : route.view)));
       body.innerHTML = `<div class="bh-empty">Загрузка…</div>`;
       try {
-        if (route.view === "service") return await renderServiceDetail(body, route.id);
+        if (route.view === "service") return await renderServiceDetail(body, route.id, route.tab);
         if (route.view === "users") return await renderUsers(body);
         return await renderOverview(body);
       } catch (e) {
@@ -180,7 +194,16 @@
   const ROOM_STATUS = { planning: "в планах", active: "в процессе", done: "завершена" };
   const LOG_RANK = { info: 0, warn: 1, error: 2 };
 
-  async function renderServiceDetail(body, id) {
+  const DETAIL_TAB_LABELS = { rooms: "Комнаты", library: "Библиотека", logs: "Логи" };
+
+  /** Подробности сервиса теперь на подвкладках (#service/<id>/<tab>) — у
+      Movies под «Библиотекой» скопилось пять разных инструментов (скан,
+      очередь докачки, ключи poiskkino, импорт подборок, удаление фильма),
+      и держать их вперемешку со статистикой/комнатами/логами одним долгим
+      списком стало неудобно читать. Статистика — единственное, что видно
+      всегда: это общая сводка по сервису, а не часть какого-то одного
+      инструмента. */
+  async function renderServiceDetail(body, id, tab) {
     let s;
     try {
       s = await api(`/api/services/${encodeURIComponent(id)}/stats`);
@@ -197,45 +220,62 @@
       </div>
       ${s.ok ? statsAndChartHtml(s.stats) : `<div class="bh-empty">Сервис недоступен: ${escapeHtml(s.error || "")}</div>`}
 
-      <div class="bh-section-title">Комнаты</div>
-      <div id="detailRooms"><div class="bh-empty">Загрузка…</div></div>
-
-      <div class="bh-section-title">Библиотека</div>
-      <div id="libraryScan"><div class="bh-empty">Загрузка…</div></div>
-      <div id="detailQueue"></div>
-      <div id="poiskkinoKeys"></div>
-      <div id="movieDelete"></div>
-      <div id="collectionImport"></div>
-
-      <div class="bh-section-title">Логи</div>
-      <div class="bh-toolbar">
-        <select id="logLevel">
-          <option value="">Все уровни</option>
-          <option value="warn">Предупреждения и ошибки</option>
-          <option value="error">Только ошибки</option>
-        </select>
-        <button class="bh-btn" id="logRefresh">Обновить</button>
-        <label class="bh-check">
-          <input type="checkbox" id="logAuto">
-          Автообновление
-        </label>
-        <select id="logAutoInterval">
-          <option value="5000">5 с</option>
-          <option value="10000" selected>10 с</option>
-          <option value="30000">30 с</option>
-          <option value="60000">60 с</option>
-        </select>
+      <div class="bh-tabs bh-subtabs">
+        ${DETAIL_TABS.map(t => `<a class="bh-tab ${t === tab ? "is-active" : ""}" href="#service/${encodeURIComponent(id)}/${t}">${DETAIL_TAB_LABELS[t]}</a>`).join("")}
       </div>
-      <div class="bh-loglist" id="logList"></div>
+      <div id="detailTabBody"></div>
     `;
 
-    loadRooms(id);
-    wireLibraryScan(id);
-    loadDetailQueue(id);
-    loadPoiskkinoKeys(id);
-    wireMovieDelete(id);
-    wireCollectionImport(id);
-    wireLogs(id);
+    const tabBody = document.getElementById("detailTabBody");
+    if (tab === "rooms") {
+      tabBody.innerHTML = `<div id="detailRooms"><div class="bh-empty">Загрузка…</div></div>`;
+      loadRooms(id);
+    } else if (tab === "library") {
+      tabBody.innerHTML = `
+        <div class="bh-section-title">Скан по kinopoisk_id</div>
+        <div id="libraryScan"><div class="bh-empty">Загрузка…</div></div>
+
+        <div class="bh-section-title">Очередь докачки деталей</div>
+        <div id="detailQueue"></div>
+
+        <div class="bh-section-title">Ключи poiskkino.dev</div>
+        <div id="poiskkinoKeys"></div>
+
+        <div class="bh-section-title">Импорт подборки Кинопоиска</div>
+        <div id="collectionImport"></div>
+
+        <div class="bh-section-title">Удаление фильма</div>
+        <div id="movieDelete"></div>
+      `;
+      wireLibraryScan(id);
+      loadDetailQueue(id);
+      loadPoiskkinoKeys(id);
+      wireCollectionImport(id);
+      wireMovieDelete(id);
+    } else {
+      tabBody.innerHTML = `
+        <div class="bh-toolbar">
+          <select id="logLevel">
+            <option value="">Все уровни</option>
+            <option value="warn">Предупреждения и ошибки</option>
+            <option value="error">Только ошибки</option>
+          </select>
+          <button class="bh-btn" id="logRefresh">Обновить</button>
+          <label class="bh-check">
+            <input type="checkbox" id="logAuto">
+            Автообновление
+          </label>
+          <select id="logAutoInterval">
+            <option value="5000">5 с</option>
+            <option value="10000" selected>10 с</option>
+            <option value="30000">30 с</option>
+            <option value="60000">60 с</option>
+          </select>
+        </div>
+        <div class="bh-loglist" id="logList"></div>
+      `;
+      wireLogs(id);
+    }
   }
 
   /** Числовые показатели — горизонтальным графиком, остальное (строки, null) — списком. */
