@@ -203,6 +203,7 @@
       <div class="bh-section-title">Библиотека</div>
       <div id="libraryScan"><div class="bh-empty">Загрузка…</div></div>
       <div id="detailQueue"></div>
+      <div id="poiskkinoKeys"></div>
       <div id="movieDelete"></div>
 
       <div class="bh-section-title">Логи</div>
@@ -230,6 +231,7 @@
     loadRooms(id);
     wireLibraryScan(id);
     loadDetailQueue(id);
+    loadPoiskkinoKeys(id);
     wireMovieDelete(id);
     wireLogs(id);
   }
@@ -395,6 +397,40 @@
         // Как и с комнатами — сервис просто не реализует /internal/movies/detail-queue.
         el.innerHTML = "";
       }
+    }
+    await render();
+  }
+
+  /** Расход квоты по каждому ключу poiskkino.dev отдельно (см. Movies
+      server.js /internal/poiskkino/keys) — несколько ключей через запятую
+      в POISKKINO_API_KEY, сервис сам переключается на следующий при
+      исчерпании текущего (см. poiskkino.js). Только видимость, тем же
+      принципом, что у loadDetailQueue/loadRooms — один запрос при заходе на
+      страницу плюс ручное «Обновить», без автополлинга. Значения самих
+      ключей сервис не отдаёт вовсе (см. keysStatus в poiskkino.js) — тут
+      только индекс и счётчик. */
+  async function loadPoiskkinoKeys(id) {
+    const el = document.getElementById("poiskkinoKeys");
+    async function render() {
+      let data;
+      try {
+        data = await api(`/api/services/${encodeURIComponent(id)}/poiskkino/keys`);
+      } catch {
+        // Сервис просто не реализует /internal/poiskkino/keys.
+        el.innerHTML = "";
+        return;
+      }
+      if (!data.enabled || !data.keys.length) { el.innerHTML = ""; return; }
+      const rows = data.keys.map(k => {
+        const exhausted = k.calls >= k.cap;
+        return `<div class="bh-stat-row"><span>Ключ ${k.index + 1}${exhausted ? " — исчерпан" : ""}</span><b>${k.calls}/${k.cap}</b></div>`;
+      }).join("");
+      el.innerHTML = `
+        <div class="bh-card">${rows}</div>
+        <div class="bh-toolbar">
+          <button class="bh-btn" id="poiskkinoKeysRefresh">Обновить</button>
+        </div>`;
+      document.getElementById("poiskkinoKeysRefresh").onclick = render;
     }
     await render();
   }

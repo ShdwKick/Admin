@@ -310,6 +310,20 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      // Расход квоты по ключам poiskkino.dev (см. Movies server.js
+      // /internal/poiskkino/keys) — несколько ключей через запятую,
+      // автопереключение при исчерпании одного.
+      const poiskkinoKeysMatch = p.match(/^\/api\/services\/([\w-]+)\/poiskkino\/keys$/);
+      if (poiskkinoKeysMatch && method === "GET") {
+        const service = SERVICES.find(s => s.id === poiskkinoKeysMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        try {
+          return json(res, 200, await callService(service, "/internal/poiskkino/keys"));
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+
       // Управление пользователями — только через auth, остальные сервисы своих не ведут.
       if (p === "/api/users" && method === "GET") {
         if (!AUTH_SERVICE) return json(res, 501, { error: "auth_not_configured" });
