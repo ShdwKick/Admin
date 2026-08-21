@@ -598,7 +598,8 @@
         });
         resultEl.innerHTML = `
           <div class="bh-card">
-            <div class="bh-stat-row"><span>${escapeHtml(data.name)}</span><b>${data.moviesCount} фильмов</b></div>
+            ${data.partial ? `<div class="bh-stat-row" style="color:var(--warn)">Квота кончилась раньше срока — собрана только часть подборки. Запустите импорт того же slug ещё раз позже, когда квота освободится, чтобы дособрать остальное.</div>` : ""}
+            <div class="bh-stat-row"><span>${escapeHtml(data.name)}</span><b>${data.moviesCount} фильмов${data.partial ? " (частично)" : ""}</b></div>
             <div class="bh-stat-row"><span>Уже были детали</span><b>${data.alreadyCached}</b></div>
             <div class="bh-stat-row"><span>Поставлено в очередь докачки</span><b>${data.queued}</b></div>
           </div>`;
