@@ -600,6 +600,7 @@
           <div class="bh-card">
             ${data.partial ? `<div class="bh-stat-row" style="color:var(--warn)">Квота кончилась раньше срока — собрана только часть подборки. Запустите импорт того же slug ещё раз позже, когда квота освободится, чтобы дособрать остальное.</div>` : ""}
             <div class="bh-stat-row"><span>${escapeHtml(data.name)}</span><b>${data.moviesCount} фильмов${data.partial ? " (частично)" : ""}</b></div>
+            ${data.skipped > 0 ? `<div class="bh-stat-row" style="color:var(--warn)"><span>Пропущено (кривые данные у Кинопоиска)</span><b>${data.skipped}</b></div>` : ""}
             <div class="bh-stat-row"><span>Уже были детали</span><b>${data.alreadyCached}</b></div>
             <div class="bh-stat-row"><span>Поставлено в очередь докачки</span><b>${data.queued}</b></div>
           </div>`;
