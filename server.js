@@ -197,6 +197,14 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/health") return json(res, 200, { ok: true });
     if (p === "/api/config") return json(res, 200, { authBase: AUTH_BASE, clientId: AUTH_CLIENT_ID });
 
+    // Админка — не для поисковиков (см. meta robots в index.html и тот же
+    // приём у Movies/server.js): дублируем запрет для краулеров, которые
+    // robots.txt уважают, но meta-тег на странице не читают.
+    if (p === "/robots.txt") {
+      res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+      return res.end("User-agent: *\nDisallow: /\n");
+    }
+
     if (p.startsWith("/api/")) {
       const admin = await requireAdmin(req);
       if (!admin) return json(res, 403, { error: "forbidden", message: "Доступ только для админов BurningHouse" });
