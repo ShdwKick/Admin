@@ -49,7 +49,7 @@ docker compose up --build
 ```
 
 `ADMIN_INTERNAL_KEY` в `docker-compose.yml` — `dev-admin-key`, то же значение
-должно быть у Auth/Финансов/Movies/Trip, поднятых локально (см. их
+должно быть у Auth/Финансов/Movies/Trip/Puzzle, поднятых локально (см. их
 `docker-compose.yml` / `docker-compose.dev.yml` в `Auth/`).
 
 ## Деплой
@@ -70,7 +70,7 @@ nginx — `deploy/nginx-admin-443.conf`, `admin.burninghouse.ru`.
 
 ```bash
 cd ~/admin
-bash set-env.sh ADMIN_INTERNAL_KEY 'то же значение, что у Auth/Финансов/Movies/Trip'
+bash set-env.sh ADMIN_INTERNAL_KEY 'то же значение, что у Auth/Финансов/Movies/Trip/Puzzle'
 docker compose -f docker-compose.prod.yml up -d   # перечитать .env
 ```
 
@@ -79,7 +79,7 @@ docker compose -f docker-compose.prod.yml up -d   # перечитать .env
 там уже есть (у Movies это `POISKKINO_API_KEY`, у Trip — `GIGACHAT_AUTH_KEY`):
 обычный `printf ... > .env` перезаписывает файл целиком и стирает их.
 
-**Одно и то же значение нужно так же положить в `.env` всех остальных четырёх
+**Одно и то же значение нужно так же положить в `.env` всех остальных пяти
 сервисов** и там же поднять их `up -d` — иначе `/internal/*` будет отвечать
 403 (ключи не совпали), а не 500: незаданный ключ там намеренно безопасный
 дефолт, а не ошибка конфигурации. `.env` не коммитьте — он в `.gitignore`.

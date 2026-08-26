@@ -17,7 +17,8 @@ services:
         [{"id":"auth","name":"Вход","baseUrl":"http://localhost:8788"},
          {"id":"finance","name":"Мои финансы","baseUrl":"http://localhost:8787"},
          {"id":"movies","name":"Что смотрим?","baseUrl":"http://localhost:8792"},
-         {"id":"trip","name":"Куда поедем?","baseUrl":"http://localhost:8790"}]
+         {"id":"trip","name":"Куда поедем?","baseUrl":"http://localhost:8790"},
+         {"id":"puzzle","name":"Что собираем?","baseUrl":"http://localhost:8796"}]
     ports:
       - "127.0.0.1:8793:8793"
 

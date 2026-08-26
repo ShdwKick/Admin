@@ -24,7 +24,8 @@ services:
         [{"id":"auth","name":"Вход","baseUrl":"https://auth.burninghouse.ru"},
          {"id":"finance","name":"Мои финансы","baseUrl":"https://money.burninghouse.ru"},
          {"id":"movies","name":"Что смотрим?","baseUrl":"https://movies.burninghouse.ru"},
-         {"id":"trip","name":"Куда поедем?","baseUrl":"https://trip.burninghouse.ru"}]
+         {"id":"trip","name":"Куда поедем?","baseUrl":"https://trip.burninghouse.ru"},
+         {"id":"puzzle","name":"Что собираем?","baseUrl":"https://puzzle.burninghouse.ru"}]
       # Сервис должен быть зарегистрирован в auth как клиент (справочно, выполняется
       # один раз руками на сервере):
       #   docker compose exec auth node server.js client-add admin "Админка" https://admin.burninghouse.ru/
