@@ -146,8 +146,8 @@ function readBody(req, limit = 64 * 1024) {
     req.on("error", reject);
   });
 }
-async function readJsonBody(req) {
-  try { return JSON.parse((await readBody(req)) || "{}"); } catch { return {}; }
+async function readJsonBody(req, limit) {
+  try { return JSON.parse((await readBody(req, limit)) || "{}"); } catch { return {}; }
 }
 
 function serveApp(res) {
@@ -367,6 +367,40 @@ const server = http.createServer(async (req, res) => {
         try {
           const data = await callService(service, `/internal/collections/${encodeURIComponent(collectionDeleteMatch[2])}`, { method: "DELETE" });
           logSelf("info", "Admin-действие: удаление подборки", { service: service.id, by: admin.username, collectionId: collectionDeleteMatch[2] });
+          return json(res, 200, data);
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+
+      // Библиотека картинок Puzzle (см. её server.js /internal/puzzles,
+      // README «Загрузка через Admin») — новые дефолтные пазлы, доступные
+      // без входа. Файл идёт как base64 внутри JSON, не FormData/multipart:
+      // callService выше всегда JSON.stringify'ит body, поднимать бинарный
+      // проброс под один этот вызов не стали. Лимит readJsonBody здесь
+      // намного больше дефолтных 64 КиБ — 4 МиБ картинка в base64 весит
+      // около 5.3 МиБ плюс обвязка JSON.
+      const puzzlesMatch = p.match(/^\/api\/services\/([\w-]+)\/puzzles$/);
+      if (puzzlesMatch && (method === "GET" || method === "POST")) {
+        const service = SERVICES.find(s => s.id === puzzlesMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        try {
+          if (method === "GET") return json(res, 200, await callService(service, "/internal/puzzles"));
+          const body = await readJsonBody(req, 6 * 1024 * 1024);
+          const data = await callService(service, "/internal/puzzles", { method: "POST", body, timeout: 20000 });
+          logSelf("info", "Admin-действие: добавлена картинка в библиотеку", { service: service.id, by: admin.username, title: body.title });
+          return json(res, 200, data);
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+      const puzzleDeleteMatch = p.match(/^\/api\/services\/([\w-]+)\/puzzles\/([\w-]+)$/);
+      if (puzzleDeleteMatch && method === "DELETE") {
+        const service = SERVICES.find(s => s.id === puzzleDeleteMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        try {
+          const data = await callService(service, `/internal/puzzles/${encodeURIComponent(puzzleDeleteMatch[2])}`, { method: "DELETE" });
+          logSelf("info", "Admin-действие: удалена картинка из библиотеки", { service: service.id, by: admin.username, puzzleId: puzzleDeleteMatch[2] });
           return json(res, 200, data);
         } catch (e) {
           return json(res, 502, { error: "upstream", message: e.message });

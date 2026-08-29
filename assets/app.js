@@ -230,7 +230,7 @@
     if (tab === "rooms") {
       tabBody.innerHTML = `<div id="detailRooms"><div class="bh-empty">Загрузка…</div></div>`;
       loadRooms(id);
-    } else if (tab === "library") {
+    } else if (tab === "library" && id === "movies") {
       tabBody.innerHTML = `
         <div class="bh-section-title">Скан по kinopoisk_id</div>
         <div id="libraryScan"><div class="bh-empty">Загрузка…</div></div>
@@ -252,6 +252,16 @@
       loadPoiskkinoKeys(id);
       wireCollectionImport(id);
       wireMovieDelete(id);
+    } else if (tab === "library" && id === "puzzle") {
+      tabBody.innerHTML = `
+        <div class="bh-section-title">Добавить картинку в библиотеку</div>
+        <div id="puzzleUpload"></div>
+      `;
+      wirePuzzleLibrary(id);
+    } else if (tab === "library") {
+      // У остальных сервисов своих инструментов «Библиотеки» пока нет — тот
+      // же принцип, что у «Комнат» без /internal/rooms: пусто, а не ошибка.
+      tabBody.innerHTML = `<div class="bh-empty">У этого сервиса нет инструментов библиотеки</div>`;
     } else {
       tabBody.innerHTML = `
         <div class="bh-toolbar">
@@ -619,6 +629,106 @@
             <div class="bh-stat-row"><span>Поставлено в очередь докачки</span><b>${data.queued}</b></div>
           </div>`;
         document.getElementById("collectionImportSlug").value = "";
+        await loadList();
+      } catch (e) {
+        resultEl.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+      }
+    };
+
+    await loadList();
+  }
+
+  /** Добавление картинок в библиотеку Puzzle (см. её server.js
+      /internal/puzzles, README «Загрузка через Admin») — новые дефолтные
+      пазлы, доступные без входа, наравне со стартовыми. Файл шлём как base64
+      внутри JSON (не FormData/multipart): callService всегда JSON.stringify'ит
+      body, а поднимать бинарный проброс под один этот вызов не стали (см.
+      комментарий у callService выше и в Puzzle README). Ширину/высоту берём
+      из реального изображения (new Image()), не только из File — нужны для
+      того, чтобы сетка деталей получилась примерно квадратной, а не как
+      попало (см. gridForPieceTarget в Puzzle server.js). */
+  async function wirePuzzleLibrary(id) {
+    const el = document.getElementById("puzzleUpload");
+    el.innerHTML = `
+      <div class="bh-toolbar">
+        <input type="text" class="bh-input-narrow" id="puzzleUploadTitle" placeholder="Название">
+        <input type="file" id="puzzleUploadFile" accept="image/png,image/jpeg,image/webp">
+        <button class="bh-btn" id="puzzleUploadBtn">Добавить в библиотеку</button>
+      </div>
+      <div id="puzzleUploadResult"></div>
+      <div id="puzzleListBox"><div class="bh-empty">Загрузка…</div></div>
+    `;
+    const resultEl = document.getElementById("puzzleUploadResult");
+    const listBox = document.getElementById("puzzleListBox");
+
+    async function loadList() {
+      let data;
+      try {
+        data = await api(`/api/services/${encodeURIComponent(id)}/puzzles`);
+      } catch (e) {
+        listBox.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+        return;
+      }
+      const rows = data.puzzles || [];
+      if (!rows.length) { listBox.innerHTML = `<div class="bh-empty">Пока ничего не добавлено</div>`; return; }
+      listBox.innerHTML = `
+        <table class="bh-table">
+          <thead><tr><th></th><th>Название</th><th>Вариантов</th><th>Добавлено</th><th></th></tr></thead>
+          <tbody>${rows.map(p => `
+            <tr data-id="${escapeHtml(p.id)}">
+              <td><img src="${escapeHtml(p.imageUrl)}" alt="" style="width:48px;height:36px;object-fit:cover;border-radius:4px;display:block"></td>
+              <td>${escapeHtml(p.title)}</td>
+              <td>${p.variants}</td>
+              <td>${new Date(p.createdAt).toLocaleDateString("ru-RU")}</td>
+              <td><button class="bh-btn danger" data-action="delete">Удалить</button></td>
+            </tr>`).join("")}</tbody>
+        </table>`;
+      listBox.querySelectorAll("button[data-action='delete']").forEach(btn => {
+        btn.onclick = async () => {
+          const tr = btn.closest("tr");
+          const pid = tr.dataset.id;
+          const title = tr.children[1].textContent;
+          if (!confirm(`Удалить «${title}» из библиотеки? Если этим пазлом уже играли в какой-то комнате, сервис откажет.`)) return;
+          try {
+            await api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(pid)}`, { method: "DELETE" });
+            await loadList();
+          } catch (e) { alert("Не получилось: " + e.message); }
+        };
+      });
+    }
+
+    function readImageAsBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error("Не удалось прочитать файл"));
+        reader.onload = () => {
+          const dataUrl = String(reader.result);
+          const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+          const img = new Image();
+          img.onload = () => resolve({ base64, width: img.naturalWidth, height: img.naturalHeight });
+          img.onerror = () => reject(new Error("Файл не похож на картинку"));
+          img.src = dataUrl;
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    document.getElementById("puzzleUploadBtn").onclick = async () => {
+      const title = document.getElementById("puzzleUploadTitle").value.trim();
+      const fileInput = document.getElementById("puzzleUploadFile");
+      const file = fileInput.files[0];
+      if (!title) { alert("Укажите название."); return; }
+      if (!file) { alert("Выберите картинку."); return; }
+      resultEl.innerHTML = `<div class="bh-empty">Загружаю…</div>`;
+      try {
+        const { base64, width, height } = await readImageAsBase64(file);
+        const data = await api(`/api/services/${encodeURIComponent(id)}/puzzles`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title, imageBase64: base64, width, height }),
+        });
+        resultEl.innerHTML = `<div class="bh-card"><div class="bh-stat-row"><span>${escapeHtml(data.title)}</span><b>${data.variants.length} вариантов сложности</b></div></div>`;
+        document.getElementById("puzzleUploadTitle").value = "";
+        fileInput.value = "";
         await loadList();
       } catch (e) {
         resultEl.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
