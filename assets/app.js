@@ -108,7 +108,7 @@
   // нужен ДО renderShell(): на него ссылается currentRoute(), которую
   // render() вызывает синхронно при первом заходе, ещё до объявления
   // const дальше по файлу.
-  const DETAIL_TABS = ["rooms", "library", "logs"];
+  const DETAIL_TABS = ["rooms", "library", "moderation", "logs"];
 
   renderShell();
 
@@ -194,7 +194,7 @@
   const ROOM_STATUS = { planning: "в планах", active: "в процессе", done: "завершена" };
   const LOG_RANK = { info: 0, warn: 1, error: 2 };
 
-  const DETAIL_TAB_LABELS = { rooms: "Комнаты", library: "Библиотека", logs: "Логи" };
+  const DETAIL_TAB_LABELS = { rooms: "Комнаты", library: "Библиотека", moderation: "Модерация", logs: "Логи" };
 
   /** Подробности сервиса теперь на подвкладках (#service/<id>/<tab>) — у
       Movies под «Библиотекой» скопилось пять разных инструментов (скан,
@@ -262,6 +262,11 @@
       // У остальных сервисов своих инструментов «Библиотеки» пока нет — тот
       // же принцип, что у «Комнат» без /internal/rooms: пусто, а не ошибка.
       tabBody.innerHTML = `<div class="bh-empty">У этого сервиса нет инструментов библиотеки</div>`;
+    } else if (tab === "moderation" && id === "puzzle") {
+      tabBody.innerHTML = `<div id="moderationQueue"><div class="bh-empty">Загрузка…</div></div>`;
+      wireModerationQueue(id);
+    } else if (tab === "moderation") {
+      tabBody.innerHTML = `<div class="bh-empty">У этого сервиса нет модерации контента</div>`;
     } else {
       tabBody.innerHTML = `
         <div class="bh-toolbar">
@@ -738,6 +743,111 @@
     await loadList();
   }
 
+  const MODERATION_STATUS_LABEL = {
+    pending: '<span class="bh-badge">на модерации</span>',
+    approved: '<span class="bh-badge admin">опубликовано</span>',
+    rejected: '<span class="bh-badge disabled">отклонено</span>',
+  };
+
+  /** Вкладка «Модерация» (только Puzzle, см. Puzzle server.js
+      /internal/moderation/photos) — ВСЕ загруженные пользователями фото,
+      не только ожидающие публикации: владелец сервиса должен видеть вообще
+      всё, включая то, что осталось приватным в чьей-то комнате (см. план).
+      Одобрить/Отклонить — только для pending. Удалить/забанить — всегда. */
+  async function wireModerationQueue(id) {
+    const el = document.getElementById("moderationQueue");
+
+    async function load() {
+      let data;
+      try {
+        data = await api(`/api/services/${encodeURIComponent(id)}/moderation/photos`);
+      } catch (e) {
+        el.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+        return;
+      }
+      const rows = data.photos || [];
+      if (!rows.length) { el.innerHTML = `<div class="bh-empty">Пока никто ничего не загружал</div>`; return; }
+      el.innerHTML = `
+        <table class="bh-table">
+          <thead><tr><th></th><th>Название</th><th>Загрузил</th><th>Комната</th><th>Статус</th><th>Загружено</th><th></th></tr></thead>
+          <tbody>${rows.map(p => `
+            <tr data-id="${escapeHtml(p.id)}" data-owner="${escapeHtml(p.ownerUserId || "")}" data-device="${escapeHtml(p.uploadDevice || "")}">
+              <td><img src="${escapeHtml(p.imageUrl)}" alt="" style="width:64px;height:48px;object-fit:cover;border-radius:4px;display:block"></td>
+              <td>${escapeHtml(p.title)}</td>
+              <td><code>${escapeHtml(p.ownerUserId || "—")}</code></td>
+              <td>${escapeHtml(p.roomTitle || "—")}</td>
+              <td>${MODERATION_STATUS_LABEL[p.moderationStatus] || '<span class="bh-badge">—</span>'}${p.moderationReason ? `<div class="bh-empty" style="padding:.2rem 0">${escapeHtml(p.moderationReason)}</div>` : ""}</td>
+              <td>${new Date(p.createdAt).toLocaleDateString("ru-RU")}</td>
+              <td class="bh-toolbar" style="margin:0">
+                ${p.moderationStatus === "pending" ? `
+                  <button class="bh-btn" data-action="approve">Одобрить</button>
+                  <button class="bh-btn danger" data-action="reject">Отклонить</button>
+                ` : ""}
+                <button class="bh-btn danger" data-action="delete">Удалить</button>
+                <button class="bh-btn danger" data-action="ban-account">Забанить аккаунт</button>
+                <button class="bh-btn danger" data-action="ban-device">Забанить устройство</button>
+              </td>
+            </tr>`).join("")}</tbody>
+        </table>`;
+
+      el.querySelectorAll("tr[data-id]").forEach(tr => {
+        const photoId = tr.dataset.id, ownerUserId = tr.dataset.owner, deviceId = tr.dataset.device;
+        const title = tr.children[1].textContent;
+        const setBusy = busy => tr.querySelectorAll("button").forEach(b => b.disabled = busy);
+
+        const btn = action => tr.querySelector(`button[data-action="${action}"]`);
+        if (btn("approve")) btn("approve").onclick = async () => {
+          if (!confirm(`Опубликовать «${title}» в общую библиотеку без входа?`)) return;
+          setBusy(true);
+          try { await api(`/api/services/${encodeURIComponent(id)}/moderation/photos/${encodeURIComponent(photoId)}/approve`, { method: "POST" }); await load(); }
+          catch (e) { alert("Не получилось: " + e.message); setBusy(false); }
+        };
+        if (btn("reject")) btn("reject").onclick = async () => {
+          const reason = prompt(`Причина отказа для «${title}» (увидит автор):`);
+          if (reason === null) return;
+          setBusy(true);
+          try {
+            await api(`/api/services/${encodeURIComponent(id)}/moderation/photos/${encodeURIComponent(photoId)}/reject`, {
+              method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }),
+            });
+            await load();
+          } catch (e) { alert("Не получилось: " + e.message); setBusy(false); }
+        };
+        btn("delete").onclick = async () => {
+          if (!confirm(`Удалить «${title}» безвозвратно? Сработает, даже если пазл уже собирали в комнате.`)) return;
+          setBusy(true);
+          try { await api(`/api/services/${encodeURIComponent(id)}/moderation/photos/${encodeURIComponent(photoId)}`, { method: "DELETE" }); await load(); }
+          catch (e) { alert("Не получилось: " + e.message); setBusy(false); }
+        };
+        btn("ban-account").onclick = async () => {
+          if (!ownerUserId) { alert("У этого фото нет владельца-аккаунта (загружено анонимно/через Admin)."); return; }
+          if (!confirm(`Заблокировать вход аккаунту, загрузившему «${title}»? Это блокирует его во ВСЕХ сервисах BurningHouse, не только в Puzzle.`)) return;
+          setBusy(true);
+          try {
+            await api(`/api/users/${encodeURIComponent(ownerUserId)}/disabled`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on: true }) });
+            alert("Аккаунт заблокирован.");
+          } catch (e) { alert("Не получилось: " + e.message); }
+          setBusy(false);
+        };
+        btn("ban-device").onclick = async () => {
+          if (!deviceId) { alert("У этой загрузки нет device-id (например, добавлено через Admin)."); return; }
+          const reason = prompt(`Причина бана устройства, с которого загружено «${title}»:`);
+          if (reason === null) return;
+          setBusy(true);
+          try {
+            await api(`/api/devices/${encodeURIComponent(deviceId)}/banned`, {
+              method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on: true, reason }),
+            });
+            alert("Устройство забанено — следующая загрузка с той же cookie будет отбита.");
+          } catch (e) { alert("Не получилось: " + e.message); }
+          setBusy(false);
+        };
+      });
+    }
+
+    await load();
+  }
+
   function logLineHtml(l) {
     const ts = new Date(l.ts).toLocaleString("ru-RU");
     const meta = l.meta ? " " + JSON.stringify(l.meta) : "";
@@ -790,6 +900,7 @@
           <button class="bh-btn" data-action="admin" data-on="${u.admin ? "0" : "1"}" ${u.id === user.id ? "disabled" : ""}>${u.admin ? "Забрать доступ" : "Сделать админом"}</button>
           <button class="bh-btn" data-action="disabled" data-on="${u.disabled ? "0" : "1"}" ${u.id === user.id ? "disabled" : ""}>${u.disabled ? "Разблокировать" : "Заблокировать"}</button>
           <button class="bh-btn danger" data-action="logout-all">Разлогинить</button>
+          <button class="bh-btn danger" data-action="ban-devices" ${u.id === user.id ? "disabled" : ""}>Забанить устройства</button>
           <button class="bh-btn danger" data-action="delete" ${u.id === user.id ? "disabled" : ""}>Удалить</button>
         </td>
       </tr>`).join("");
@@ -831,15 +942,17 @@
           admin: on ? "выдать доступ в Админку" : "забрать доступ в Админку",
           disabled: on ? "заблокировать вход" : "разблокировать вход",
           "logout-all": "разлогинить на всех устройствах",
+          "ban-devices": "забанить ВСЕ устройства, с которых этот аккаунт когда-либо логинился (по cookie — очистка cookies это обходит, но поднимает планку для повторной загрузки под новым аккаунтом)",
         }[action];
         if (!confirm(`Точно ${label}?`)) return;
 
         tr.querySelectorAll("button").forEach(b => b.disabled = true);
         try {
-          const init = action === "logout-all"
+          const init = action === "logout-all" || action === "ban-devices"
             ? { method: "POST" }
             : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on }) };
-          await api(`/api/users/${encodeURIComponent(id)}/${action}`, init);
+          const data = await api(`/api/users/${encodeURIComponent(id)}/${action}`, init);
+          if (action === "ban-devices") alert(`Забанено устройств: ${data.count}.`);
           renderUsers(body);
         } catch (e) {
           alert("Не получилось: " + e.message);

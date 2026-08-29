@@ -407,6 +407,53 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      // Модерация загруженных пользователями фото (см. Puzzle server.js
+      // /internal/moderation/*, план «Модерация загруженных фото»).
+      const modPhotosMatch = p.match(/^\/api\/services\/([\w-]+)\/moderation\/photos$/);
+      if (modPhotosMatch && method === "GET") {
+        const service = SERVICES.find(s => s.id === modPhotosMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        try { return json(res, 200, await callService(service, "/internal/moderation/photos")); }
+        catch (e) { return json(res, 502, { error: "upstream", message: e.message }); }
+      }
+      const modApproveMatch = p.match(/^\/api\/services\/([\w-]+)\/moderation\/photos\/([\w-]+)\/approve$/);
+      if (modApproveMatch && method === "POST") {
+        const service = SERVICES.find(s => s.id === modApproveMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        try {
+          const data = await callService(service, `/internal/moderation/photos/${encodeURIComponent(modApproveMatch[2])}/approve`, { method: "POST" });
+          logSelf("info", "Admin-действие: одобрена публикация фото", { service: service.id, by: admin.username, photoId: modApproveMatch[2] });
+          return json(res, 200, data);
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+      const modRejectMatch = p.match(/^\/api\/services\/([\w-]+)\/moderation\/photos\/([\w-]+)\/reject$/);
+      if (modRejectMatch && method === "POST") {
+        const service = SERVICES.find(s => s.id === modRejectMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        const body = await readJsonBody(req);
+        try {
+          const data = await callService(service, `/internal/moderation/photos/${encodeURIComponent(modRejectMatch[2])}/reject`, { method: "POST", body });
+          logSelf("info", "Admin-действие: отклонена публикация фото", { service: service.id, by: admin.username, photoId: modRejectMatch[2], reason: body.reason });
+          return json(res, 200, data);
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+      const modDeleteMatch = p.match(/^\/api\/services\/([\w-]+)\/moderation\/photos\/([\w-]+)$/);
+      if (modDeleteMatch && method === "DELETE") {
+        const service = SERVICES.find(s => s.id === modDeleteMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        try {
+          const data = await callService(service, `/internal/moderation/photos/${encodeURIComponent(modDeleteMatch[2])}`, { method: "DELETE" });
+          logSelf("warn", "Admin-действие: удалено загруженное фото (модерация)", { service: service.id, by: admin.username, photoId: modDeleteMatch[2] });
+          return json(res, 200, data);
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+
       // Управление пользователями — только через auth, остальные сервисы своих не ведут.
       if (p === "/api/users" && method === "GET") {
         if (!AUTH_SERVICE) return json(res, 501, { error: "auth_not_configured" });
@@ -414,19 +461,50 @@ const server = http.createServer(async (req, res) => {
         catch (e) { return json(res, 502, { error: "upstream", message: e.message }); }
       }
 
-      const roleMatch = p.match(/^\/api\/users\/([\w-]+)\/(admin|disabled|logout-all)$/);
+      const roleMatch = p.match(/^\/api\/users\/([\w-]+)\/(admin|disabled|logout-all|ban-devices)$/);
       if (roleMatch && method === "POST") {
         if (!AUTH_SERVICE) return json(res, 501, { error: "auth_not_configured" });
         const [, userId, action] = roleMatch;
         // Самому себе доступ отзывать через эту же кнопку — верный способ
         // остаться снаружи закрытой двери без второго админа под рукой.
+        // ban-devices сюда тоже подпадает (action !== "logout-all") — забанить
+        // самому себе все свои устройства из этой же вкладки было бы так же
+        // неприятно, как самобан аккаунта.
         if (action !== "logout-all" && userId === admin.id) {
           return json(res, 400, { error: "self_action", message: "Нельзя менять роль самому себе отсюда — используйте CLI на сервере" });
         }
         const body = action === "logout-all" ? {} : await readJsonBody(req);
+        if (action === "ban-devices") body.by = admin.username;
         try {
-          await callService(AUTH_SERVICE, `/internal/users/${encodeURIComponent(userId)}/${action}`, { method: "POST", body });
+          const data = await callService(AUTH_SERVICE, `/internal/users/${encodeURIComponent(userId)}/${action}`, { method: "POST", body });
           logSelf("info", `Admin-действие: ${action}`, { userId, by: admin.username, on: action === "logout-all" ? undefined : !!body.on });
+          return json(res, 200, action === "ban-devices" ? data : { ok: true });
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+
+      // Устройства конкретного аккаунта (см. Auth server.js user_devices) —
+      // для показа перед массовым баном (roleMatch выше, action=ban-devices).
+      const userDevicesMatch = p.match(/^\/api\/users\/([\w-]+)\/devices$/);
+      if (userDevicesMatch && method === "GET") {
+        if (!AUTH_SERVICE) return json(res, 501, { error: "auth_not_configured" });
+        try { return json(res, 200, await callService(AUTH_SERVICE, `/internal/users/${encodeURIComponent(userDevicesMatch[1])}/devices`)); }
+        catch (e) { return json(res, 502, { error: "upstream", message: e.message }); }
+      }
+
+      // Бан ОДНОГО конкретного устройства — из вкладки «Модерация» Puzzle,
+      // по uploadDevice конкретного фото (не обязательно все устройства
+      // владельца, см. ban-devices выше — это более узкое, точечное
+      // действие). Звонит не в service, а в сам Auth: устройства — его
+      // реестр (см. план «Модерация загруженных фото», часть 0).
+      const deviceBanMatch = p.match(/^\/api\/devices\/([\w-]+)\/banned$/);
+      if (deviceBanMatch && method === "POST") {
+        if (!AUTH_SERVICE) return json(res, 501, { error: "auth_not_configured" });
+        const body = await readJsonBody(req);
+        try {
+          await callService(AUTH_SERVICE, `/internal/devices/${encodeURIComponent(deviceBanMatch[1])}/banned`, { method: "POST", body: { ...body, by: admin.username } });
+          logSelf("warn", `Admin-действие: ${body.on ? "бан" : "разбан"} устройства`, { deviceId: deviceBanMatch[1], by: admin.username });
           return json(res, 200, { ok: true });
         } catch (e) {
           return json(res, 502, { error: "upstream", message: e.message });
