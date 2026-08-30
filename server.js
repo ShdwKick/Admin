@@ -435,12 +435,21 @@ const server = http.createServer(async (req, res) => {
           });
           const pxData = await pxRes.json().catch(() => ({}));
           if (!pxRes.ok) return json(res, 502, { error: "pexels", message: (pxData && pxData.error) || `HTTP ${pxRes.status}` });
+          // Лимит — не отдельная ручка (у Pexels её и нет), а заголовки на
+          // КАЖДОМ ответе /search; отдаём фронту, чтобы админ видел остаток
+          // и не улетел в 429 посреди массового импорта не глядя.
+          const rlLimit = parseInt(pxRes.headers.get("x-ratelimit-limit"), 10);
+          const rlRemaining = parseInt(pxRes.headers.get("x-ratelimit-remaining"), 10);
+          const rlReset = parseInt(pxRes.headers.get("x-ratelimit-reset"), 10);
           return json(res, 200, {
             photos: (pxData.photos || []).map(ph => ({
               id: ph.id, width: ph.width, height: ph.height, alt: ph.alt || "",
               photographer: ph.photographer, thumbUrl: ph.src.medium, importUrl: ph.src.large2x,
             })),
             page: pxData.page, hasMore: !!pxData.next_page,
+            rateLimit: Number.isFinite(rlLimit) && Number.isFinite(rlRemaining)
+              ? { limit: rlLimit, remaining: rlRemaining, resetAt: Number.isFinite(rlReset) ? rlReset * 1000 : null }
+              : null,
           });
         } catch (e) {
           return json(res, 502, { error: "pexels", message: e.message });

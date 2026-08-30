@@ -875,6 +875,7 @@
         <input type="text" class="bh-input-narrow" id="pexelsQuery" placeholder="Запрос, напр. mountains" style="width:16em">
         <button class="bh-btn" id="pexelsSearchBtn">Искать</button>
       </div>
+      <div id="pexelsRateLimit"></div>
       <div class="bh-section-title">Категории для импортируемых</div>
       <div id="pexelsCategories"><div class="bh-empty">Загрузка…</div></div>
       <div id="pexelsResults"><div class="bh-empty">Введите запрос и нажмите «Искать»</div></div>
@@ -884,6 +885,7 @@
       <div id="pexelsImportResult"></div>
     `;
     const categoriesBox = document.getElementById("pexelsCategories");
+    const rateLimitEl = document.getElementById("pexelsRateLimit");
     const resultsEl = document.getElementById("pexelsResults");
     const importBtn = document.getElementById("pexelsImportBtn");
     const importResultEl = document.getElementById("pexelsImportResult");
@@ -913,6 +915,15 @@
       importBtn.textContent = `Импортировать выбранные (${n})`;
     }
 
+    // Отдельной ручки «сколько осталось» у Pexels нет — лимит виден только в
+    // заголовках ответа на сам /search (см. Admin/server.js), поэтому
+    // обновляется тут же, после каждого поиска, а не запрашивается отдельно.
+    function renderRateLimit(rateLimit) {
+      if (!rateLimit) { rateLimitEl.innerHTML = ""; return; }
+      const low = rateLimit.remaining < rateLimit.limit * 0.05;
+      rateLimitEl.innerHTML = `<div class="bh-stat-row"><span>Лимит Pexels${low ? " — почти исчерпан" : ""}</span><b>${rateLimit.remaining} / ${rateLimit.limit}${rateLimit.resetAt ? `, сброс ${new Date(rateLimit.resetAt).toLocaleString("ru-RU")}` : ""}</b></div>`;
+    }
+
     async function search() {
       const query = document.getElementById("pexelsQuery").value.trim();
       if (!query) { alert("Введите запрос."); return; }
@@ -920,6 +931,7 @@
       try {
         const data = await api(`/api/pexels/search?query=${encodeURIComponent(query)}`);
         photos = data.photos || [];
+        renderRateLimit(data.rateLimit);
       } catch (e) {
         resultsEl.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
         return;
