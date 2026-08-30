@@ -528,6 +528,22 @@ const server = http.createServer(async (req, res) => {
           return json(res, 502, { error: "upstream", message: e.message });
         }
       }
+      // Переименование — та же кнопка «Сохранить», что и у категорий строкой
+      // выше (см. wirePuzzleLibrary в app.js): после импорта с Pexels без
+      // alt-текста название иногда уходит болванкой, тут его можно поправить.
+      const puzzleTitleMatch = p.match(/^\/api\/services\/([\w-]+)\/puzzles\/([\w-]+)\/title$/);
+      if (puzzleTitleMatch && method === "POST") {
+        const service = SERVICES.find(s => s.id === puzzleTitleMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        const body = await readJsonBody(req);
+        try {
+          const data = await callService(service, `/internal/puzzles/${encodeURIComponent(puzzleTitleMatch[2])}/title`, { method: "POST", body });
+          logSelf("info", "Admin-действие: переименован пазл", { service: service.id, by: admin.username, puzzleId: puzzleTitleMatch[2], title: body.title });
+          return json(res, 200, data);
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
 
       // Модерация загруженных пользователями фото (см. Puzzle server.js
       // /internal/moderation/*, план «Модерация загруженных фото»).

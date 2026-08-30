@@ -689,12 +689,18 @@
       </div>
       <div id="puzzleUploadCategories" style="margin:.4rem 0"></div>
       <div id="puzzleUploadResult"></div>
+      <div class="bh-toolbar">
+        <input type="text" class="bh-input-narrow" id="puzzleFilterSearch" placeholder="Поиск по названию" style="width:12em">
+        <select id="puzzleFilterCategory"><option value="">Все категории</option></select>
+      </div>
       <div id="puzzleListBox"><div class="bh-empty">Загрузка…</div></div>
     `;
     const resultEl = document.getElementById("puzzleUploadResult");
     const listBox = document.getElementById("puzzleListBox");
     const categoryListBox = document.getElementById("categoryListBox");
     const uploadCategoriesBox = document.getElementById("puzzleUploadCategories");
+    const filterSearchInput = document.getElementById("puzzleFilterSearch");
+    const filterCategorySelect = document.getElementById("puzzleFilterCategory");
 
     // Категория стала many-to-many (см. план «Категории many-to-many,
     // автор карточки, профиль») — везде, где раньше был одиночный <select>,
@@ -746,6 +752,87 @@
       });
     }
 
+    let allPuzzles = []; // полный список с последней загрузки — фильтры ниже работают по нему на месте, без похода на сервер
+
+    // Фильтр по названию/категории — на клиенте: библиотека админ-загруженных
+    // картинок даже после массового импорта с Pexels остаётся сотнями, не
+    // десятками тысяч строк, отдельная серверная фильтрация/пагинация тут
+    // не окупается (в отличие, скажем, от витрины фильмов у Movies).
+    function renderList(rows) {
+      if (!rows.length) { listBox.innerHTML = `<div class="bh-empty">${allPuzzles.length ? "Ничего не подходит под фильтр" : "Пока ничего не добавлено"}</div>`; return; }
+      listBox.innerHTML = `
+        <table class="bh-table">
+          <thead><tr><th></th><th>Название</th><th>Категории</th><th>Вариантов</th><th>Добавлено</th><th></th></tr></thead>
+          <tbody>${rows.map(p => `
+            <tr data-id="${escapeHtml(p.id)}">
+              <td><img src="${escapeHtml(baseUrl + p.imageUrl)}" alt="" style="width:48px;height:36px;object-fit:cover;border-radius:4px;display:block"></td>
+              <td><input type="text" class="bh-input-narrow" data-role="title" value="${escapeHtml(p.title)}" style="width:11em"></td>
+              <td>
+                <div data-role="categories">${categoryCheckboxesHtml("rowCategory-" + escapeHtml(p.id), p.categoryIds || [])}</div>
+              </td>
+              <td>${p.variants}</td>
+              <td>${new Date(p.createdAt).toLocaleDateString("ru-RU")}</td>
+              <td>
+                <button class="bh-btn" data-action="save">Сохранить</button>
+                <button class="bh-btn danger" data-action="delete">Удалить</button>
+              </td>
+            </tr>`).join("")}</tbody>
+        </table>`;
+      listBox.querySelectorAll("button[data-action='delete']").forEach(btn => {
+        btn.onclick = async () => {
+          const tr = btn.closest("tr");
+          const pid = tr.dataset.id;
+          const title = tr.querySelector('[data-role="title"]').value;
+          if (!confirm(`Удалить «${title}» из библиотеки? Если этим пазлом уже играли в какой-то комнате, сервис откажет.`)) return;
+          try {
+            await api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(pid)}`, { method: "DELETE" });
+            await loadList();
+          } catch (e) { alert("Не получилось: " + e.message); }
+        };
+      });
+      // Название и категории сохраняются одной кнопкой, не по каждому
+      // изменению отдельно — с несколькими независимыми полями/чекбоксами
+      // применение на лету было бы дёргано (N запросов на N правок вместо
+      // одного). Название пуcтым не бывает — после импорта с Pexels у
+      // фото без alt-текста оно уходит "Пазл с Pexels" (см.
+      // wirePexelsImport), но иногда его всё равно хочется поправить руками.
+      listBox.querySelectorAll("button[data-action='save']").forEach(btn => {
+        btn.onclick = async () => {
+          const tr = btn.closest("tr");
+          const pid = tr.dataset.id;
+          const titleInput = tr.querySelector('[data-role="title"]');
+          const title = titleInput.value.trim();
+          if (!title) { alert("Название не может быть пустым."); titleInput.focus(); return; }
+          const categoryIds = [...tr.querySelectorAll("input[type=checkbox]:checked")].map(cb => cb.value);
+          btn.disabled = true;
+          try {
+            await Promise.all([
+              api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(pid)}/title`, {
+                method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }),
+              }),
+              api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(pid)}/categories`, {
+                method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ categoryIds }),
+              }),
+            ]);
+            titleInput.value = title;
+          } catch (e) {
+            alert("Не получилось: " + e.message);
+          }
+          btn.disabled = false;
+        };
+      });
+    }
+
+    function applyFilter() {
+      const query = filterSearchInput.value.trim().toLowerCase();
+      const categoryId = filterCategorySelect.value;
+      const filtered = allPuzzles.filter(p =>
+        (!query || p.title.toLowerCase().includes(query)) &&
+        (!categoryId || (p.categoryIds || []).includes(categoryId))
+      );
+      renderList(filtered);
+    }
+
     async function loadList() {
       let data;
       try {
@@ -754,55 +841,17 @@
         listBox.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
         return;
       }
-      const rows = data.puzzles || [];
-      if (!rows.length) { listBox.innerHTML = `<div class="bh-empty">Пока ничего не добавлено</div>`; return; }
-      listBox.innerHTML = `
-        <table class="bh-table">
-          <thead><tr><th></th><th>Название</th><th>Категории</th><th>Вариантов</th><th>Добавлено</th><th></th></tr></thead>
-          <tbody>${rows.map(p => `
-            <tr data-id="${escapeHtml(p.id)}">
-              <td><img src="${escapeHtml(baseUrl + p.imageUrl)}" alt="" style="width:48px;height:36px;object-fit:cover;border-radius:4px;display:block"></td>
-              <td>${escapeHtml(p.title)}</td>
-              <td>
-                <div data-role="categories">${categoryCheckboxesHtml("rowCategory-" + escapeHtml(p.id), p.categoryIds || [])}</div>
-                <button class="bh-btn" data-action="save-categories" style="margin-top:.3em">Сохранить</button>
-              </td>
-              <td>${p.variants}</td>
-              <td>${new Date(p.createdAt).toLocaleDateString("ru-RU")}</td>
-              <td><button class="bh-btn danger" data-action="delete">Удалить</button></td>
-            </tr>`).join("")}</tbody>
-        </table>`;
-      listBox.querySelectorAll("button[data-action='delete']").forEach(btn => {
-        btn.onclick = async () => {
-          const tr = btn.closest("tr");
-          const pid = tr.dataset.id;
-          const title = tr.children[1].textContent;
-          if (!confirm(`Удалить «${title}» из библиотеки? Если этим пазлом уже играли в какой-то комнате, сервис откажет.`)) return;
-          try {
-            await api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(pid)}`, { method: "DELETE" });
-            await loadList();
-          } catch (e) { alert("Не получилось: " + e.message); }
-        };
-      });
-      // Чекбоксы применяются по кнопке «Сохранить», не сразу на клик — с
-      // несколькими независимыми чекбоксами мгновенное применение на каждый
-      // клик было бы дёргано (N запросов на N кликов вместо одного).
-      listBox.querySelectorAll("button[data-action='save-categories']").forEach(btn => {
-        btn.onclick = async () => {
-          const tr = btn.closest("tr");
-          const pid = tr.dataset.id;
-          const categoryIds = [...tr.querySelectorAll("input[type=checkbox]:checked")].map(cb => cb.value);
-          btn.disabled = true;
-          try {
-            await api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(pid)}/categories`, {
-              method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ categoryIds }),
-            });
-          } catch (e) {
-            alert("Не получилось: " + e.message);
-          }
-          btn.disabled = false;
-        };
-      });
+      allPuzzles = data.puzzles || [];
+      // Опции селекта — из тех же approved-категорий, что и чекбоксы строк
+      // (см. categories выше); сохраняем текущий выбор, если категория никуда
+      // не делась, чтобы фильтр не сбрасывался на каждый loadList() (после
+      // сохранения строки, удаления и т.п.).
+      const approved = categories.filter(c => c.status === "approved");
+      const selected = filterCategorySelect.value;
+      filterCategorySelect.innerHTML = `<option value="">Все категории</option>${approved.map(c =>
+        `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join("")}`;
+      if (approved.some(c => c.id === selected)) filterCategorySelect.value = selected;
+      applyFilter();
     }
 
     function readImageAsBase64(file) {
@@ -821,6 +870,9 @@
       });
     }
 
+    filterSearchInput.oninput = applyFilter;
+    filterCategorySelect.onchange = applyFilter;
+
     document.getElementById("categoryCreateBtn").onclick = async () => {
       const input = document.getElementById("categoryCreateName");
       const name = input.value.trim();
@@ -831,6 +883,7 @@
         });
         input.value = "";
         await loadCategories();
+        await loadList(); // подтягивает новую категорию и в фильтр, и в чекбоксы строк
       } catch (e) { alert("Не получилось: " + e.message); }
     };
 
@@ -879,6 +932,7 @@
       <div class="bh-section-title">Категории для импортируемых</div>
       <div id="pexelsCategories"><div class="bh-empty">Загрузка…</div></div>
       <div id="pexelsResults"><div class="bh-empty">Введите запрос и нажмите «Искать»</div></div>
+      <div id="pexelsPager"></div>
       <div class="bh-toolbar">
         <button class="bh-btn" id="pexelsImportBtn" disabled>Импортировать выбранные (0)</button>
       </div>
@@ -887,6 +941,7 @@
     const categoriesBox = document.getElementById("pexelsCategories");
     const rateLimitEl = document.getElementById("pexelsRateLimit");
     const resultsEl = document.getElementById("pexelsResults");
+    const pagerEl = document.getElementById("pexelsPager");
     const importBtn = document.getElementById("pexelsImportBtn");
     const importResultEl = document.getElementById("pexelsImportResult");
     let photos = []; // последний результат поиска — для сопоставления с чекбоксами при импорте
@@ -924,12 +979,14 @@
       rateLimitEl.innerHTML = `<div class="bh-stat-row"><span>Лимит Pexels${low ? " — почти исчерпан" : ""}</span><b>${rateLimit.remaining} / ${rateLimit.limit}${rateLimit.resetAt ? `, сброс ${new Date(rateLimit.resetAt).toLocaleString("ru-RU")}` : ""}</b></div>`;
     }
 
-    async function search() {
+    async function search(page = 1) {
       const query = document.getElementById("pexelsQuery").value.trim();
       if (!query) { alert("Введите запрос."); return; }
       resultsEl.innerHTML = `<div class="bh-empty">Ищу…</div>`;
+      pagerEl.innerHTML = "";
+      let data;
       try {
-        const data = await api(`/api/pexels/search?query=${encodeURIComponent(query)}`);
+        data = await api(`/api/pexels/search?query=${encodeURIComponent(query)}&page=${page}`);
         photos = data.photos || [];
         renderRateLimit(data.rateLimit);
       } catch (e) {
@@ -944,11 +1001,22 @@
           <span class="bh-photo-caption">${escapeHtml(ph.photographer || "")}</span>
         </label>`).join("")}</div>`;
       updateImportButton();
+      // Выбранное на предыдущей странице при листании теряется — сопоставлять
+      // id между страницами ради сохранения десятка чекбоксов не того стоит,
+      // это же просто накидывание болванок в библиотеку, не форма с данными.
+      pagerEl.innerHTML = `
+        <div class="bh-toolbar">
+          <button class="bh-btn" id="pexelsPrevBtn" ${page <= 1 ? "disabled" : ""}>← Назад</button>
+          <span class="bh-empty" style="padding:0">Страница ${page}</span>
+          <button class="bh-btn" id="pexelsNextBtn" ${data.hasMore ? "" : "disabled"}>Вперёд →</button>
+        </div>`;
+      document.getElementById("pexelsPrevBtn").onclick = () => search(page - 1);
+      document.getElementById("pexelsNextBtn").onclick = () => search(page + 1);
     }
 
     resultsEl.addEventListener("change", updateImportButton);
-    document.getElementById("pexelsSearchBtn").onclick = search;
-    document.getElementById("pexelsQuery").onkeydown = e => { if (e.key === "Enter") search(); };
+    document.getElementById("pexelsSearchBtn").onclick = () => search(1);
+    document.getElementById("pexelsQuery").onkeydown = e => { if (e.key === "Enter") search(1); };
 
     importBtn.onclick = async () => {
       const checkedIds = [...resultsEl.querySelectorAll("input:checked")].map(cb => cb.value);
