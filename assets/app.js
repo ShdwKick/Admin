@@ -253,18 +253,20 @@
       wireCollectionImport(id);
       wireMovieDelete(id);
     } else if (tab === "library" && id === "puzzle") {
-      tabBody.innerHTML = `
-        <div class="bh-section-title">Добавить картинку в библиотеку</div>
-        <div id="puzzleUpload"></div>
-      `;
+      tabBody.innerHTML = `<div id="puzzleUpload"></div>`;
       wirePuzzleLibrary(id);
     } else if (tab === "library") {
       // У остальных сервисов своих инструментов «Библиотеки» пока нет — тот
       // же принцип, что у «Комнат» без /internal/rooms: пусто, а не ошибка.
       tabBody.innerHTML = `<div class="bh-empty">У этого сервиса нет инструментов библиотеки</div>`;
     } else if (tab === "moderation" && id === "puzzle") {
-      tabBody.innerHTML = `<div id="moderationQueue"><div class="bh-empty">Загрузка…</div></div>`;
+      tabBody.innerHTML = `
+        <div id="moderationQueue"><div class="bh-empty">Загрузка…</div></div>
+        <div class="bh-section-title">Категории на модерации</div>
+        <div id="categoryModerationQueue"><div class="bh-empty">Загрузка…</div></div>
+      `;
       wireModerationQueue(id);
+      wireCategoryModerationQueue(id);
     } else if (tab === "moderation") {
       tabBody.innerHTML = `<div class="bh-empty">У этого сервиса нет модерации контента</div>`;
     } else {
@@ -652,19 +654,88 @@
       из реального изображения (new Image()), не только из File — нужны для
       того, чтобы сетка деталей получилась примерно квадратной, а не как
       попало (см. gridForPieceTarget в Puzzle server.js). */
+  /** Категории (см. план «Категории пазлов в библиотеке») — общий список,
+      переиспользуется и в форме загрузки (выбор при добавлении), и в
+      таблице уже добавленных картинок (смена категории задним числом,
+      иначе три стартовые и всё загруженное раньше этого захода навсегда
+      остались бы без категории). categories — замыкание, актуализируется
+      после каждого создания/удаления, обе таблицы просто перерисовываются
+      заново, без точечных патчей DOM — картинок и категорий немного,
+      сложность не окупается. */
   async function wirePuzzleLibrary(id) {
     const el = document.getElementById("puzzleUpload");
     el.innerHTML = `
+      <div class="bh-section-title">Категории</div>
+      <div class="bh-toolbar">
+        <input type="text" class="bh-input-narrow" id="categoryCreateName" placeholder="Название категории">
+        <button class="bh-btn" id="categoryCreateBtn">Создать</button>
+      </div>
+      <div id="categoryListBox"></div>
+
+      <div class="bh-section-title">Добавить картинку в библиотеку</div>
       <div class="bh-toolbar">
         <input type="text" class="bh-input-narrow" id="puzzleUploadTitle" placeholder="Название">
         <input type="file" id="puzzleUploadFile" accept="image/png,image/jpeg,image/webp">
         <button class="bh-btn" id="puzzleUploadBtn">Добавить в библиотеку</button>
       </div>
+      <div id="puzzleUploadCategories" style="margin:.4rem 0"></div>
       <div id="puzzleUploadResult"></div>
       <div id="puzzleListBox"><div class="bh-empty">Загрузка…</div></div>
     `;
     const resultEl = document.getElementById("puzzleUploadResult");
     const listBox = document.getElementById("puzzleListBox");
+    const categoryListBox = document.getElementById("categoryListBox");
+    const uploadCategoriesBox = document.getElementById("puzzleUploadCategories");
+
+    // Категория стала many-to-many (см. план «Категории many-to-many,
+    // автор карточки, профиль») — везде, где раньше был одиночный <select>,
+    // теперь группа чекбоксов. Пикеры (форма загрузки, строка таблицы)
+    // предлагают только approved категории — pending/rejected админ видит
+    // только в списке управления ниже, привязывать картинку к ним отсюда
+    // нельзя (approved решается через отдельную модерацию категорий).
+    let categories = [];
+
+    function categoryCheckboxesHtml(name, selectedIds) {
+      const approved = categories.filter(c => c.status === "approved");
+      if (!approved.length) return `<div class="bh-empty">Нет ни одной категории</div>`;
+      return approved.map(c => `
+        <label style="display:inline-flex;align-items:center;gap:.3em;margin:0 .8em .3em 0">
+          <input type="checkbox" name="${name}" value="${escapeHtml(c.id)}" ${selectedIds.includes(c.id) ? "checked" : ""}>
+          ${escapeHtml(c.name)}
+        </label>`).join("");
+    }
+
+    async function loadCategories() {
+      let data;
+      try {
+        data = await api(`/api/services/${encodeURIComponent(id)}/categories`);
+      } catch (e) {
+        categoryListBox.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+        return;
+      }
+      categories = data.categories || [];
+      uploadCategoriesBox.innerHTML = categoryCheckboxesHtml("puzzleUploadCategory", []);
+      categoryListBox.innerHTML = categories.length
+        ? categories.map(c => `
+            <span class="bh-badge${c.status !== "approved" ? " " + c.status : ""}" data-id="${escapeHtml(c.id)}" style="display:inline-flex;align-items:center;gap:.4em;margin:.2em .3em .2em 0">
+              ${escapeHtml(c.name)}${c.status !== "approved" ? ` (${c.status === "pending" ? "на модерации" : "отклонена"})` : ""}
+              <button class="bh-btn danger" data-action="delete-category" style="padding:.1em .5em">×</button>
+            </span>`).join("")
+        : `<div class="bh-empty">Пока нет ни одной категории</div>`;
+      categoryListBox.querySelectorAll("button[data-action='delete-category']").forEach(btn => {
+        btn.onclick = async () => {
+          const span = btn.closest("span");
+          const cid = span.dataset.id;
+          const name = span.textContent.trim().replace(/×$/, "").trim();
+          if (!confirm(`Удалить категорию «${name}»? Картинки этой категории останутся, просто потеряют эту метку.`)) return;
+          try {
+            await api(`/api/services/${encodeURIComponent(id)}/categories/${encodeURIComponent(cid)}`, { method: "DELETE" });
+            await loadCategories();
+            await loadList();
+          } catch (e) { alert("Не получилось: " + e.message); }
+        };
+      });
+    }
 
     async function loadList() {
       let data;
@@ -678,11 +749,15 @@
       if (!rows.length) { listBox.innerHTML = `<div class="bh-empty">Пока ничего не добавлено</div>`; return; }
       listBox.innerHTML = `
         <table class="bh-table">
-          <thead><tr><th></th><th>Название</th><th>Вариантов</th><th>Добавлено</th><th></th></tr></thead>
+          <thead><tr><th></th><th>Название</th><th>Категории</th><th>Вариантов</th><th>Добавлено</th><th></th></tr></thead>
           <tbody>${rows.map(p => `
             <tr data-id="${escapeHtml(p.id)}">
               <td><img src="${escapeHtml(p.imageUrl)}" alt="" style="width:48px;height:36px;object-fit:cover;border-radius:4px;display:block"></td>
               <td>${escapeHtml(p.title)}</td>
+              <td>
+                <div data-role="categories">${categoryCheckboxesHtml("rowCategory-" + escapeHtml(p.id), p.categoryIds || [])}</div>
+                <button class="bh-btn" data-action="save-categories" style="margin-top:.3em">Сохранить</button>
+              </td>
               <td>${p.variants}</td>
               <td>${new Date(p.createdAt).toLocaleDateString("ru-RU")}</td>
               <td><button class="bh-btn danger" data-action="delete">Удалить</button></td>
@@ -698,6 +773,25 @@
             await api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(pid)}`, { method: "DELETE" });
             await loadList();
           } catch (e) { alert("Не получилось: " + e.message); }
+        };
+      });
+      // Чекбоксы применяются по кнопке «Сохранить», не сразу на клик — с
+      // несколькими независимыми чекбоксами мгновенное применение на каждый
+      // клик было бы дёргано (N запросов на N кликов вместо одного).
+      listBox.querySelectorAll("button[data-action='save-categories']").forEach(btn => {
+        btn.onclick = async () => {
+          const tr = btn.closest("tr");
+          const pid = tr.dataset.id;
+          const categoryIds = [...tr.querySelectorAll("input[type=checkbox]:checked")].map(cb => cb.value);
+          btn.disabled = true;
+          try {
+            await api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(pid)}/categories`, {
+              method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ categoryIds }),
+            });
+          } catch (e) {
+            alert("Не получилось: " + e.message);
+          }
+          btn.disabled = false;
         };
       });
     }
@@ -718,8 +812,22 @@
       });
     }
 
+    document.getElementById("categoryCreateBtn").onclick = async () => {
+      const input = document.getElementById("categoryCreateName");
+      const name = input.value.trim();
+      if (!name) { alert("Укажите название категории."); return; }
+      try {
+        await api(`/api/services/${encodeURIComponent(id)}/categories`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }),
+        });
+        input.value = "";
+        await loadCategories();
+      } catch (e) { alert("Не получилось: " + e.message); }
+    };
+
     document.getElementById("puzzleUploadBtn").onclick = async () => {
       const title = document.getElementById("puzzleUploadTitle").value.trim();
+      const categoryIds = [...uploadCategoriesBox.querySelectorAll("input[type=checkbox]:checked")].map(cb => cb.value);
       const fileInput = document.getElementById("puzzleUploadFile");
       const file = fileInput.files[0];
       if (!title) { alert("Укажите название."); return; }
@@ -729,7 +837,7 @@
         const { base64, width, height } = await readImageAsBase64(file);
         const data = await api(`/api/services/${encodeURIComponent(id)}/puzzles`, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title, imageBase64: base64, width, height }),
+          body: JSON.stringify({ title, imageBase64: base64, width, height, categoryIds }),
         });
         resultEl.innerHTML = `<div class="bh-card"><div class="bh-stat-row"><span>${escapeHtml(data.title)}</span><b>${data.variants.length} вариантов сложности</b></div></div>`;
         document.getElementById("puzzleUploadTitle").value = "";
@@ -740,6 +848,7 @@
       }
     };
 
+    await loadCategories();
     await loadList();
   }
 
@@ -841,6 +950,64 @@
             alert("Устройство забанено — следующая загрузка с той же cookie будет отбита.");
           } catch (e) { alert("Не получилось: " + e.message); }
           setBusy(false);
+        };
+      });
+    }
+
+    await load();
+  }
+
+  /** Вкладка «Модерация» — категории, предложенные пользователями при
+      публикации (см. Puzzle server.js /internal/moderation/categories,
+      план «Категории many-to-many, автор карточки, профиль»). Только
+      pending — одобренные/отклонённые дальше не видны тут же, как и у
+      фото-очереди список сам сужается по мере разбора. */
+  async function wireCategoryModerationQueue(id) {
+    const el = document.getElementById("categoryModerationQueue");
+
+    async function load() {
+      let data;
+      try {
+        data = await api(`/api/services/${encodeURIComponent(id)}/moderation/categories`);
+      } catch (e) {
+        el.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+        return;
+      }
+      const rows = data.categories || [];
+      if (!rows.length) { el.innerHTML = `<div class="bh-empty">Нет категорий на модерации</div>`; return; }
+      el.innerHTML = `
+        <table class="bh-table">
+          <thead><tr><th>Название</th><th>Предложил</th><th>Когда</th><th></th></tr></thead>
+          <tbody>${rows.map(c => `
+            <tr data-id="${escapeHtml(c.id)}">
+              <td>${escapeHtml(c.name)}</td>
+              <td><code>${escapeHtml(c.createdBy || "—")}</code></td>
+              <td>${new Date(c.createdAt).toLocaleDateString("ru-RU")}</td>
+              <td class="bh-toolbar" style="margin:0">
+                <button class="bh-btn" data-action="approve">Одобрить</button>
+                <button class="bh-btn danger" data-action="reject">Отклонить</button>
+              </td>
+            </tr>`).join("")}</tbody>
+        </table>`;
+      el.querySelectorAll("tr[data-id]").forEach(tr => {
+        const categoryId = tr.dataset.id;
+        const name = tr.children[0].textContent;
+        const setBusy = busy => tr.querySelectorAll("button").forEach(b => b.disabled = busy);
+        tr.querySelector("button[data-action='approve']").onclick = async () => {
+          setBusy(true);
+          try { await api(`/api/services/${encodeURIComponent(id)}/moderation/categories/${encodeURIComponent(categoryId)}/approve`, { method: "POST" }); await load(); }
+          catch (e) { alert("Не получилось: " + e.message); setBusy(false); }
+        };
+        tr.querySelector("button[data-action='reject']").onclick = async () => {
+          const reason = prompt(`Причина отказа для категории «${name}» (не показывается автору сейчас — своей вкладки заявок у пользователя пока нет):`);
+          if (reason === null) return;
+          setBusy(true);
+          try {
+            await api(`/api/services/${encodeURIComponent(id)}/moderation/categories/${encodeURIComponent(categoryId)}/reject`, {
+              method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }),
+            });
+            await load();
+          } catch (e) { alert("Не получилось: " + e.message); setBusy(false); }
         };
       });
     }

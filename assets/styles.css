@@ -148,6 +148,8 @@ table.bh-table tr:hover td{ background:color-mix(in srgb, var(--flame-tip) 5%, t
 .bh-badge{ display:inline-block; font-size:.72rem; padding:.1rem .5rem; border-radius:1rem; border:1px solid var(--card-border); color:var(--ink-dim); }
 .bh-badge.admin{ color:var(--flame-tip); border-color:color-mix(in srgb, var(--flame-tip) 50%, transparent); }
 .bh-badge.disabled{ color:var(--danger); border-color:color-mix(in srgb, var(--danger) 50%, transparent); }
+.bh-badge.pending{ color:var(--flame-tip); border-color:color-mix(in srgb, var(--flame-tip) 50%, transparent); }
+.bh-badge.rejected{ color:var(--danger); border-color:color-mix(in srgb, var(--danger) 50%, transparent); }
 
 .bh-loglist{ display:flex; flex-direction:column; gap:.35rem; font-family:ui-monospace,Consolas,monospace; font-size:.82rem; max-height:70vh; overflow:auto; }
 .bh-logline{ display:flex; gap:.6rem; padding:.35rem .5rem; border-radius:.4rem; background:var(--card-bg); border:1px solid var(--card-border); }

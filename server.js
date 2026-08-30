@@ -407,6 +407,51 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      // Категории библиотеки (см. Puzzle server.js /internal/categories,
+      // план «Категории пазлов в библиотеке»).
+      const categoriesMatch = p.match(/^\/api\/services\/([\w-]+)\/categories$/);
+      if (categoriesMatch && (method === "GET" || method === "POST")) {
+        const service = SERVICES.find(s => s.id === categoriesMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        try {
+          if (method === "GET") return json(res, 200, await callService(service, "/internal/categories"));
+          const body = await readJsonBody(req);
+          const data = await callService(service, "/internal/categories", { method: "POST", body });
+          logSelf("info", "Admin-действие: создана категория", { service: service.id, by: admin.username, name: body.name });
+          return json(res, 200, data);
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+      const categoryDeleteMatch = p.match(/^\/api\/services\/([\w-]+)\/categories\/([\w-]+)$/);
+      if (categoryDeleteMatch && method === "DELETE") {
+        const service = SERVICES.find(s => s.id === categoryDeleteMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        try {
+          const data = await callService(service, `/internal/categories/${encodeURIComponent(categoryDeleteMatch[2])}`, { method: "DELETE" });
+          logSelf("info", "Admin-действие: удалена категория", { service: service.id, by: admin.username, categoryId: categoryDeleteMatch[2] });
+          return json(res, 200, data);
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+      // Множественное число в пути — категория стала many-to-many (см.
+      // план «Категории many-to-many, автор карточки, профиль»), тело
+      // теперь {categoryIds: [...]}, не одиночный {categoryId}.
+      const puzzleCategoryMatch = p.match(/^\/api\/services\/([\w-]+)\/puzzles\/([\w-]+)\/categories$/);
+      if (puzzleCategoryMatch && method === "POST") {
+        const service = SERVICES.find(s => s.id === puzzleCategoryMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        const body = await readJsonBody(req);
+        try {
+          const data = await callService(service, `/internal/puzzles/${encodeURIComponent(puzzleCategoryMatch[2])}/categories`, { method: "POST", body });
+          logSelf("info", "Admin-действие: изменены категории пазла", { service: service.id, by: admin.username, puzzleId: puzzleCategoryMatch[2], categoryIds: body.categoryIds });
+          return json(res, 200, data);
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+
       // Модерация загруженных пользователями фото (см. Puzzle server.js
       // /internal/moderation/*, план «Модерация загруженных фото»).
       const modPhotosMatch = p.match(/^\/api\/services\/([\w-]+)\/moderation\/photos$/);
@@ -448,6 +493,42 @@ const server = http.createServer(async (req, res) => {
         try {
           const data = await callService(service, `/internal/moderation/photos/${encodeURIComponent(modDeleteMatch[2])}`, { method: "DELETE" });
           logSelf("warn", "Admin-действие: удалено загруженное фото (модерация)", { service: service.id, by: admin.username, photoId: modDeleteMatch[2] });
+          return json(res, 200, data);
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+
+      // Модерация пользовательских категорий (см. Puzzle server.js
+      // /internal/moderation/categories/*, план «Категории many-to-many») —
+      // тот же паттерн, что у модерации фото выше.
+      const modCategoriesMatch = p.match(/^\/api\/services\/([\w-]+)\/moderation\/categories$/);
+      if (modCategoriesMatch && method === "GET") {
+        const service = SERVICES.find(s => s.id === modCategoriesMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        try { return json(res, 200, await callService(service, "/internal/moderation/categories")); }
+        catch (e) { return json(res, 502, { error: "upstream", message: e.message }); }
+      }
+      const modCategoryApproveMatch = p.match(/^\/api\/services\/([\w-]+)\/moderation\/categories\/([\w-]+)\/approve$/);
+      if (modCategoryApproveMatch && method === "POST") {
+        const service = SERVICES.find(s => s.id === modCategoryApproveMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        try {
+          const data = await callService(service, `/internal/moderation/categories/${encodeURIComponent(modCategoryApproveMatch[2])}/approve`, { method: "POST" });
+          logSelf("info", "Admin-действие: одобрена категория", { service: service.id, by: admin.username, categoryId: modCategoryApproveMatch[2] });
+          return json(res, 200, data);
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+      const modCategoryRejectMatch = p.match(/^\/api\/services\/([\w-]+)\/moderation\/categories\/([\w-]+)\/reject$/);
+      if (modCategoryRejectMatch && method === "POST") {
+        const service = SERVICES.find(s => s.id === modCategoryRejectMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        const body = await readJsonBody(req);
+        try {
+          const data = await callService(service, `/internal/moderation/categories/${encodeURIComponent(modCategoryRejectMatch[2])}/reject`, { method: "POST", body });
+          logSelf("info", "Admin-действие: отклонена категория", { service: service.id, by: admin.username, categoryId: modCategoryRejectMatch[2], reason: body.reason });
           return json(res, 200, data);
         } catch (e) {
           return json(res, 502, { error: "upstream", message: e.message });
