@@ -893,8 +893,7 @@
                   <button class="bh-btn danger" data-action="reject">Отклонить</button>
                 ` : ""}
                 <button class="bh-btn danger" data-action="delete">Удалить</button>
-                <button class="bh-btn danger" data-action="ban-account">Забанить аккаунт</button>
-                <button class="bh-btn danger" data-action="ban-device">Забанить устройство</button>
+                <button class="bh-btn danger" data-action="ban">Забанить</button>
               </td>
             </tr>`).join("")}</tbody>
         </table>`;
@@ -928,26 +927,36 @@
           try { await api(`/api/services/${encodeURIComponent(id)}/moderation/photos/${encodeURIComponent(photoId)}`, { method: "DELETE" }); await load(); }
           catch (e) { alert("Не получилось: " + e.message); setBusy(false); }
         };
-        btn("ban-account").onclick = async () => {
-          if (!ownerUserId) { alert("У этого фото нет владельца-аккаунта (загружено анонимно/через Admin)."); return; }
-          if (!confirm(`Заблокировать вход аккаунту, загрузившему «${title}»? Это блокирует его во ВСЕХ сервисах BurningHouse, не только в Puzzle.`)) return;
+        // Аккаунт и устройство банятся одной кнопкой: цель у обоих одна — не
+        // дать тому же человеку загрузить ещё раз, а не два разных действия.
+        // Заодно закрывает дыру, которую оставляло раздельное нажатие: бан
+        // только аккаунта не мешает грузить анонимно с того же браузера, бан
+        // только устройства не мешает перелогиниться на другом.
+        btn("ban").onclick = async () => {
+          if (!ownerUserId && !deviceId) {
+            alert("У этого фото нет ни владельца-аккаунта, ни device-id (например, загружено анонимно/через Admin) — банить нечего.");
+            return;
+          }
+          const lines = [`Заблокировать того, кто загрузил «${title}»?`];
+          if (ownerUserId) lines.push("— аккаунт: блокирует вход во ВСЕХ сервисах BurningHouse, не только в Puzzle");
+          if (deviceId) lines.push("— устройство: следующая загрузка с той же cookie отобьётся");
+          if (!confirm(lines.join("\n"))) return;
+          let reason;
+          if (deviceId) {
+            reason = prompt("Причина бана устройства (для лога):");
+            if (reason === null) return;
+          }
           setBusy(true);
           try {
-            await api(`/api/users/${encodeURIComponent(ownerUserId)}/disabled`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on: true }) });
-            alert("Аккаунт заблокирован.");
-          } catch (e) { alert("Не получилось: " + e.message); }
-          setBusy(false);
-        };
-        btn("ban-device").onclick = async () => {
-          if (!deviceId) { alert("У этой загрузки нет device-id (например, добавлено через Admin)."); return; }
-          const reason = prompt(`Причина бана устройства, с которого загружено «${title}»:`);
-          if (reason === null) return;
-          setBusy(true);
-          try {
-            await api(`/api/devices/${encodeURIComponent(deviceId)}/banned`, {
-              method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on: true, reason }),
-            });
-            alert("Устройство забанено — следующая загрузка с той же cookie будет отбита.");
+            if (ownerUserId) {
+              await api(`/api/users/${encodeURIComponent(ownerUserId)}/disabled`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on: true }) });
+            }
+            if (deviceId) {
+              await api(`/api/devices/${encodeURIComponent(deviceId)}/banned`, {
+                method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on: true, reason }),
+              });
+            }
+            alert("Забанено.");
           } catch (e) { alert("Не получилось: " + e.message); }
           setBusy(false);
         };
