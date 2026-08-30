@@ -254,7 +254,7 @@
       wireMovieDelete(id);
     } else if (tab === "library" && id === "puzzle") {
       tabBody.innerHTML = `<div id="puzzleUpload"></div>`;
-      wirePuzzleLibrary(id);
+      wirePuzzleLibrary(id, s.baseUrl);
     } else if (tab === "library") {
       // У остальных сервисов своих инструментов «Библиотеки» пока нет — тот
       // же принцип, что у «Комнат» без /internal/rooms: пусто, а не ошибка.
@@ -265,7 +265,7 @@
         <div class="bh-section-title">Категории на модерации</div>
         <div id="categoryModerationQueue"><div class="bh-empty">Загрузка…</div></div>
       `;
-      wireModerationQueue(id);
+      wireModerationQueue(id, s.baseUrl);
       wireCategoryModerationQueue(id);
     } else if (tab === "moderation") {
       tabBody.innerHTML = `<div class="bh-empty">У этого сервиса нет модерации контента</div>`;
@@ -662,7 +662,7 @@
       после каждого создания/удаления, обе таблицы просто перерисовываются
       заново, без точечных патчей DOM — картинок и категорий немного,
       сложность не окупается. */
-  async function wirePuzzleLibrary(id) {
+  async function wirePuzzleLibrary(id, baseUrl) {
     const el = document.getElementById("puzzleUpload");
     el.innerHTML = `
       <div class="bh-section-title">Категории</div>
@@ -752,7 +752,7 @@
           <thead><tr><th></th><th>Название</th><th>Категории</th><th>Вариантов</th><th>Добавлено</th><th></th></tr></thead>
           <tbody>${rows.map(p => `
             <tr data-id="${escapeHtml(p.id)}">
-              <td><img src="${escapeHtml(p.imageUrl)}" alt="" style="width:48px;height:36px;object-fit:cover;border-radius:4px;display:block"></td>
+              <td><img src="${escapeHtml(baseUrl + p.imageUrl)}" alt="" style="width:48px;height:36px;object-fit:cover;border-radius:4px;display:block"></td>
               <td>${escapeHtml(p.title)}</td>
               <td>
                 <div data-role="categories">${categoryCheckboxesHtml("rowCategory-" + escapeHtml(p.id), p.categoryIds || [])}</div>
@@ -863,7 +863,7 @@
       не только ожидающие публикации: владелец сервиса должен видеть вообще
       всё, включая то, что осталось приватным в чьей-то комнате (см. план).
       Одобрить/Отклонить — только для pending. Удалить/забанить — всегда. */
-  async function wireModerationQueue(id) {
+  async function wireModerationQueue(id, baseUrl) {
     const el = document.getElementById("moderationQueue");
 
     async function load() {
@@ -881,7 +881,7 @@
           <thead><tr><th></th><th>Название</th><th>Загрузил</th><th>Комната</th><th>Статус</th><th>Загружено</th><th></th></tr></thead>
           <tbody>${rows.map(p => `
             <tr data-id="${escapeHtml(p.id)}" data-owner="${escapeHtml(p.ownerUserId || "")}" data-device="${escapeHtml(p.uploadDevice || "")}">
-              <td><img src="${escapeHtml(p.imageUrl)}" alt="" style="width:64px;height:48px;object-fit:cover;border-radius:4px;display:block"></td>
+              <td><img src="${escapeHtml(baseUrl + p.imageUrl)}" alt="" style="width:64px;height:48px;object-fit:cover;border-radius:4px;display:block"></td>
               <td>${escapeHtml(p.title)}</td>
               <td><code>${escapeHtml(p.ownerUserId || "—")}</code></td>
               <td>${escapeHtml(p.roomTitle || "—")}</td>

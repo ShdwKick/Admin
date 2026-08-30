@@ -126,7 +126,12 @@ async function callService(service, urlPath, { method = "GET", body, timeout = 5
 async function fetchServiceStats(service) {
   try {
     const stats = await callService(service, "/internal/stats");
-    return { id: service.id, name: service.name, ok: true, stats };
+    // baseUrl уходит фронту не просто справочно: он публичный домен сервиса
+    // и так, а вкладкам «Библиотека»/«Модерация» у Puzzle нужен, чтобы
+    // достроить абсолютный <img src> — свои /uploads/* сервис отдаёт по
+    // относительному пути, а картинка рисуется на странице Admin, у него
+    // другой origin (см. wirePuzzleLibrary/wireModerationQueue в app.js).
+    return { id: service.id, name: service.name, ok: true, baseUrl: service.baseUrl, stats };
   } catch (e) {
     return { id: service.id, name: service.name, ok: false, error: e.message };
   }
