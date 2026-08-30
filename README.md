@@ -34,6 +34,7 @@ docker compose exec auth node server.js admins        # кто сейчас ад
 | `AUTH_CLIENT_ID` | нет (по умолчанию `admin`) | id этого сервиса в auth |
 | `ADMIN_INTERNAL_KEY` | да | общий секрет с `/internal/*` остальных сервисов |
 | `SERVICES_JSON` | да | какие сервисы показывать — см. пример в `docker-compose.prod.yml` |
+| `PEXELS_API_KEY` | нет | ключ [pexels.com](https://www.pexels.com/api/) для вкладки «Импорт» у Puzzle (наполнение библиотеки готовыми фото). Без него вкладка отвечает 503 |
 | `PORT`, `HOST` | нет | по умолчанию `8793` / `127.0.0.1` |
 
 Один из элементов `SERVICES_JSON` обязан иметь `"id":"auth"` — через него

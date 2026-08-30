@@ -186,4 +186,18 @@ table.bh-table tr:hover td{ background:color-mix(in srgb, var(--flame-tip) 5%, t
 .bh-modal img{ max-width:100%; max-height:60vh; object-fit:contain; border-radius:.6rem; display:block; margin:0 auto; background:color-mix(in srgb, #000 30%, transparent); }
 .bh-modal-fields{ display:flex; flex-direction:column; gap:.3rem; }
 .bh-modal-thumb{ cursor:zoom-in; }
+
+/* Сетка выбора фото при импорте с Pexels (см. wirePexelsImport в app.js) —
+   клик по всей карточке переключает чекбокс, выделенная получает рамку. */
+.bh-photo-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(8.5rem, 1fr)); gap:.7rem; }
+.bh-photo-cell{
+  display:block; cursor:pointer; border-radius:.6rem; overflow:hidden;
+  border:2px solid transparent; background:var(--card-bg);
+}
+.bh-photo-cell:has(input:checked){ border-color:var(--flame-tip); }
+.bh-photo-cell img{ width:100%; height:6.5rem; object-fit:cover; display:block; }
+.bh-photo-cell .bh-photo-caption{
+  display:block; font-size:.7rem; color:var(--ink-dim); padding:.25rem .4rem;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
 .bh-gate button.bh-btn{ padding:.6rem 1.4rem; font-size:.95rem; }

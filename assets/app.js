@@ -108,7 +108,7 @@
   // нужен ДО renderShell(): на него ссылается currentRoute(), которую
   // render() вызывает синхронно при первом заходе, ещё до объявления
   // const дальше по файлу.
-  const DETAIL_TABS = ["rooms", "library", "moderation", "logs"];
+  const DETAIL_TABS = ["rooms", "library", "import", "moderation", "logs"];
 
   renderShell();
 
@@ -194,7 +194,7 @@
   const ROOM_STATUS = { planning: "в планах", active: "в процессе", done: "завершена" };
   const LOG_RANK = { info: 0, warn: 1, error: 2 };
 
-  const DETAIL_TAB_LABELS = { rooms: "Комнаты", library: "Библиотека", moderation: "Модерация", logs: "Логи" };
+  const DETAIL_TAB_LABELS = { rooms: "Комнаты", library: "Библиотека", import: "Импорт", moderation: "Модерация", logs: "Логи" };
 
   /** Подробности сервиса теперь на подвкладках (#service/<id>/<tab>) — у
       Movies под «Библиотекой» скопилось пять разных инструментов (скан,
@@ -273,6 +273,11 @@
       wireCategoryModerationQueue(id);
     } else if (tab === "moderation") {
       tabBody.innerHTML = `<div class="bh-empty">У этого сервиса нет модерации контента</div>`;
+    } else if (tab === "import" && id === "puzzle") {
+      tabBody.innerHTML = `<div id="pexelsImport"></div>`;
+      wirePexelsImport(id);
+    } else if (tab === "import") {
+      tabBody.innerHTML = `<div class="bh-empty">У этого сервиса нет импорта из внешних источников</div>`;
     } else {
       tabBody.innerHTML = `
         <div class="bh-toolbar">
@@ -854,6 +859,114 @@
 
     await loadCategories();
     await loadList();
+  }
+
+  /** Импорт из Pexels (см. Admin/server.js /api/pexels/search и
+      /api/services/:id/pexels/import, PEXELS_API_KEY) — быстрое наполнение
+      дефолтной библиотеки: находим фото по запросу, отмечаем нужные, разом
+      закидываем в библиотеку с общим набором категорий. Название пазла
+      берётся из alt-текста Pexels — редактировать его тут негде, это
+      быстрое накидывание болванок, точечная правка названия/категорий уже
+      есть в таблице на вкладке «Библиотека» после импорта. */
+  async function wirePexelsImport(id) {
+    const el = document.getElementById("pexelsImport");
+    el.innerHTML = `
+      <div class="bh-toolbar">
+        <input type="text" class="bh-input-narrow" id="pexelsQuery" placeholder="Запрос, напр. mountains" style="width:16em">
+        <button class="bh-btn" id="pexelsSearchBtn">Искать</button>
+      </div>
+      <div class="bh-section-title">Категории для импортируемых</div>
+      <div id="pexelsCategories"><div class="bh-empty">Загрузка…</div></div>
+      <div id="pexelsResults"><div class="bh-empty">Введите запрос и нажмите «Искать»</div></div>
+      <div class="bh-toolbar">
+        <button class="bh-btn" id="pexelsImportBtn" disabled>Импортировать выбранные (0)</button>
+      </div>
+      <div id="pexelsImportResult"></div>
+    `;
+    const categoriesBox = document.getElementById("pexelsCategories");
+    const resultsEl = document.getElementById("pexelsResults");
+    const importBtn = document.getElementById("pexelsImportBtn");
+    const importResultEl = document.getElementById("pexelsImportResult");
+    let photos = []; // последний результат поиска — для сопоставления с чекбоксами при импорте
+
+    async function loadCategories() {
+      let data;
+      try {
+        data = await api(`/api/services/${encodeURIComponent(id)}/categories`);
+      } catch (e) {
+        categoriesBox.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+        return;
+      }
+      const approved = (data.categories || []).filter(c => c.status === "approved");
+      categoriesBox.innerHTML = approved.length
+        ? approved.map(c => `
+            <label style="display:inline-flex;align-items:center;gap:.3em;margin:0 .8em .3em 0">
+              <input type="checkbox" name="pexelsCategory" value="${escapeHtml(c.id)}">
+              ${escapeHtml(c.name)}
+            </label>`).join("")
+        : `<div class="bh-empty">Нет ни одной категории — создайте на вкладке «Библиотека»</div>`;
+    }
+
+    function updateImportButton() {
+      const n = resultsEl.querySelectorAll("input:checked").length;
+      importBtn.disabled = n === 0;
+      importBtn.textContent = `Импортировать выбранные (${n})`;
+    }
+
+    async function search() {
+      const query = document.getElementById("pexelsQuery").value.trim();
+      if (!query) { alert("Введите запрос."); return; }
+      resultsEl.innerHTML = `<div class="bh-empty">Ищу…</div>`;
+      try {
+        const data = await api(`/api/pexels/search?query=${encodeURIComponent(query)}`);
+        photos = data.photos || [];
+      } catch (e) {
+        resultsEl.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+        return;
+      }
+      if (!photos.length) { resultsEl.innerHTML = `<div class="bh-empty">Ничего не нашлось</div>`; return; }
+      resultsEl.innerHTML = `<div class="bh-photo-grid">${photos.map(ph => `
+        <label class="bh-photo-cell">
+          <input type="checkbox" value="${escapeHtml(String(ph.id))}" hidden>
+          <img src="${escapeHtml(ph.thumbUrl)}" alt="${escapeHtml(ph.alt)}" loading="lazy">
+          <span class="bh-photo-caption">${escapeHtml(ph.photographer || "")}</span>
+        </label>`).join("")}</div>`;
+      updateImportButton();
+    }
+
+    resultsEl.addEventListener("change", updateImportButton);
+    document.getElementById("pexelsSearchBtn").onclick = search;
+    document.getElementById("pexelsQuery").onkeydown = e => { if (e.key === "Enter") search(); };
+
+    importBtn.onclick = async () => {
+      const checkedIds = [...resultsEl.querySelectorAll("input:checked")].map(cb => cb.value);
+      if (!checkedIds.length) return;
+      const categoryIds = [...categoriesBox.querySelectorAll("input:checked")].map(cb => cb.value);
+      importBtn.disabled = true;
+      let done = 0, failed = 0;
+      for (const photoId of checkedIds) {
+        const photo = photos.find(ph => String(ph.id) === photoId);
+        importResultEl.innerHTML = `<div class="bh-empty">Импортирую ${done + failed + 1} из ${checkedIds.length}…</div>`;
+        try {
+          await api(`/api/services/${encodeURIComponent(id)}/pexels/import`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              importUrl: photo.importUrl, width: photo.width, height: photo.height,
+              title: photo.alt || "Пазл с Pexels", categoryIds,
+            }),
+          });
+          done++;
+        } catch (e) { failed++; }
+      }
+      importResultEl.innerHTML = `
+        <div class="bh-card">
+          <div class="bh-stat-row"><span>Импортировано</span><b>${done}</b></div>
+          ${failed ? `<div class="bh-stat-row"><span>Ошибок</span><b>${failed}</b></div>` : ""}
+        </div>`;
+      updateImportButton();
+    };
+
+    await loadCategories();
   }
 
   const MODERATION_STATUS_LABEL = {

@@ -30,6 +30,12 @@
  *     [{"id":"auth","name":"Вход","baseUrl":"https://auth.burninghouse.ru"}, …]
  *     Один из элементов должен иметь id "auth" — через него идёт управление
  *     пользователями (список, роль админа, блокировка, разлогин).
+ *   PEXELS_API_KEY  необязательно — быстрое наполнение библиотеки Puzzle
+ *     готовыми фото с pexels.com (вкладка «Импорт» на странице Puzzle).
+ *     Без него вкладка отвечает 503, остальной Admin работает как обычно.
+ *     Ключ живёт только тут: сама загрузка в Puzzle идёт через уже
+ *     существующий POST /api/services/:id/puzzles (см. ниже), Puzzle про
+ *     Pexels вообще не знает.
  */
 "use strict";
 
@@ -46,6 +52,8 @@ const AUTH_ISSUER = (process.env.AUTH_ISSUER || "").replace(/\/+$/, "");
 const AUTH_CLIENT_ID = process.env.AUTH_CLIENT_ID || "admin";
 const AUTH_BASE = (process.env.AUTH_BASE || AUTH_ISSUER).replace(/\/+$/, "");
 const ADMIN_INTERNAL_KEY = process.env.ADMIN_INTERNAL_KEY || "";
+const PEXELS_API_KEY = process.env.PEXELS_API_KEY || "";
+if (!PEXELS_API_KEY) console.warn("PEXELS_API_KEY не задан — вкладка «Импорт» у Puzzle отвечает 503.");
 
 if (!AUTH_ISSUER) {
   console.error("Не задан AUTH_ISSUER — без него нечем проверять токены. Укажите адрес auth-сервиса, напр. AUTH_ISSUER=https://auth.burninghouse.ru");
@@ -406,6 +414,61 @@ const server = http.createServer(async (req, res) => {
         try {
           const data = await callService(service, `/internal/puzzles/${encodeURIComponent(puzzleDeleteMatch[2])}`, { method: "DELETE" });
           logSelf("info", "Admin-действие: удалена картинка из библиотеки", { service: service.id, by: admin.username, puzzleId: puzzleDeleteMatch[2] });
+          return json(res, 200, data);
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+
+      // Поиск на Pexels — быстрое наполнение дефолтной библиотеки Puzzle (см.
+      // PEXELS_API_KEY выше). Не привязан к конкретному сервису: это ключ
+      // самого Admin, Puzzle про Pexels не знает вовсе.
+      if (p === "/api/pexels/search" && method === "GET") {
+        if (!PEXELS_API_KEY) return json(res, 503, { error: "not_configured", message: "PEXELS_API_KEY не задан." });
+        const query = (url.searchParams.get("query") || "").trim();
+        if (!query) return json(res, 400, { error: "missing_query" });
+        const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10) || 1);
+        try {
+          const pxRes = await fetch(`https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=24&page=${page}`, {
+            headers: { Authorization: PEXELS_API_KEY },
+            signal: AbortSignal.timeout(10000),
+          });
+          const pxData = await pxRes.json().catch(() => ({}));
+          if (!pxRes.ok) return json(res, 502, { error: "pexels", message: (pxData && pxData.error) || `HTTP ${pxRes.status}` });
+          return json(res, 200, {
+            photos: (pxData.photos || []).map(ph => ({
+              id: ph.id, width: ph.width, height: ph.height, alt: ph.alt || "",
+              photographer: ph.photographer, thumbUrl: ph.src.medium, importUrl: ph.src.large2x,
+            })),
+            page: pxData.page, hasMore: !!pxData.next_page,
+          });
+        } catch (e) {
+          return json(res, 502, { error: "pexels", message: e.message });
+        }
+      }
+
+      // Сам импорт: картинка качается тут, на сервере Admin (быстрее, чем
+      // тащить её в браузер админа и обратно, и без вопросов CORS у
+      // images.pexels.com), а дальше уходит тем же путём, что и обычная
+      // ручная загрузка — POST /internal/puzzles у Puzzle (см. puzzlesMatch
+      // выше). Puzzle про Pexels ничего не знает, для него это просто ещё
+      // один base64-аплоад.
+      const pexelsImportMatch = p.match(/^\/api\/services\/([\w-]+)\/pexels\/import$/);
+      if (pexelsImportMatch && method === "POST") {
+        if (!PEXELS_API_KEY) return json(res, 503, { error: "not_configured", message: "PEXELS_API_KEY не задан." });
+        const service = SERVICES.find(s => s.id === pexelsImportMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        const body = await readJsonBody(req);
+        const { importUrl, width, height, title, categoryIds } = body || {};
+        if (!importUrl || !title) return json(res, 400, { error: "missing_fields" });
+        try {
+          const imgRes = await fetch(importUrl, { signal: AbortSignal.timeout(20000) });
+          if (!imgRes.ok) return json(res, 502, { error: "pexels", message: `Не удалось скачать фото с Pexels: HTTP ${imgRes.status}` });
+          const imageBase64 = Buffer.from(await imgRes.arrayBuffer()).toString("base64");
+          const data = await callService(service, "/internal/puzzles", {
+            method: "POST", body: { title, imageBase64, width, height, categoryIds }, timeout: 20000,
+          });
+          logSelf("info", "Admin-действие: импорт картинки с Pexels", { service: service.id, by: admin.username, title });
           return json(res, 200, data);
         } catch (e) {
           return json(res, 502, { error: "upstream", message: e.message });

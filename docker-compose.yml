@@ -13,6 +13,10 @@ services:
       AUTH_CLIENT_ID: admin
       # То же самое значение, что в Auth/Финансах/Movies/Trip на локальной машине.
       ADMIN_INTERNAL_KEY: dev-admin-key
+      # Необязательно — вкладка «Импорт» у Puzzle без него просто отвечает
+      # 503. Реальное значение — в .env рядом с этим compose (см. README,
+      # тот же приём, что у ADMIN_INTERNAL_KEY на проде), сюда не хардкодить.
+      PEXELS_API_KEY: ${PEXELS_API_KEY:-}
       SERVICES_JSON: >-
         [{"id":"auth","name":"Вход","baseUrl":"http://localhost:8788"},
          {"id":"finance","name":"Мои финансы","baseUrl":"http://localhost:8787"},
