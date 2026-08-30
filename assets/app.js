@@ -261,10 +261,14 @@
       tabBody.innerHTML = `<div class="bh-empty">У этого сервиса нет инструментов библиотеки</div>`;
     } else if (tab === "moderation" && id === "puzzle") {
       tabBody.innerHTML = `
+        <div class="bh-section-title">Фото в комнатах — на проверке</div>
+        <div id="roomUploadQueue"><div class="bh-empty">Загрузка…</div></div>
+        <div class="bh-section-title">Заявки на публикацию</div>
         <div id="moderationQueue"><div class="bh-empty">Загрузка…</div></div>
         <div class="bh-section-title">Категории на модерации</div>
         <div id="categoryModerationQueue"><div class="bh-empty">Загрузка…</div></div>
       `;
+      wireRoomUploadQueue(id, s.baseUrl);
       wireModerationQueue(id, s.baseUrl);
       wireCategoryModerationQueue(id);
     } else if (tab === "moderation") {
@@ -858,10 +862,166 @@
     rejected: '<span class="bh-badge disabled">отклонено</span>',
   };
 
+  function closePhotoModal() {
+    const el = document.getElementById("bhPhotoModal");
+    if (el) el.remove();
+    document.removeEventListener("keydown", closePhotoModalOnEsc);
+  }
+  function closePhotoModalOnEsc(e) { if (e.key === "Escape") closePhotoModal(); }
+
+  /** Модалка «фото целиком» — общая для обеих очередей ниже (см.
+      wireRoomUploadQueue/wireModerationQueue). Миниатюра 48–64px в таблице
+      мало, чтобы разглядеть запрещённый контент — тут оригинал во весь
+      доступный экран. Кнопки действий в модалке НЕ дублируют логику
+      approve/reject/ban: это тонкое реле, которое жмёт настоящую кнопку той
+      же строки таблицы и закрывает модалку — один источник правды на клик,
+      а не две копии confirm()/api() при этом и в строке, и в модалке. */
+  function openPhotoModal(photo, baseUrl, tr, fields) {
+    closePhotoModal();
+    const backdrop = document.createElement("div");
+    backdrop.className = "bh-modal-backdrop";
+    backdrop.id = "bhPhotoModal";
+    backdrop.innerHTML = `
+      <div class="bh-modal" role="dialog" aria-modal="true" aria-label="${escapeHtml(photo.title)}">
+        <div class="bh-modal-head">
+          <h3>${escapeHtml(photo.title)}</h3>
+          <button class="bh-modal-close" aria-label="Закрыть">×</button>
+        </div>
+        <img src="${escapeHtml(baseUrl + photo.imageUrl)}" alt="">
+        <div class="bh-modal-fields">${fields.map(([k, v]) => `<div class="bh-stat-row"><span>${escapeHtml(k)}</span><b>${v}</b></div>`).join("")}</div>
+        <div class="bh-toolbar" id="bhPhotoModalActions"></div>
+      </div>
+    `;
+    backdrop.querySelector(".bh-modal-close").onclick = closePhotoModal;
+    backdrop.onclick = e => { if (e.target === backdrop) closePhotoModal(); };
+    document.addEventListener("keydown", closePhotoModalOnEsc);
+
+    const actionsEl = backdrop.querySelector("#bhPhotoModalActions");
+    tr.querySelectorAll("td.bh-toolbar button").forEach(rowBtn => {
+      const relayBtn = document.createElement("button");
+      relayBtn.className = rowBtn.className;
+      relayBtn.textContent = rowBtn.textContent;
+      relayBtn.onclick = () => { closePhotoModal(); rowBtn.click(); };
+      actionsEl.appendChild(relayBtn);
+    });
+
+    document.body.appendChild(backdrop);
+  }
+
+  /** Очередь ЗАГРУЗКИ В КОМНАТУ — фоновая модерация, отдельная от заявок на
+      публикацию (см. Puzzle server.js /internal/moderation/room-uploads,
+      план «Разделение модерации: загрузка в комнату vs публикация +
+      письма»): своё фото видно в комнате сразу после загрузки
+      (самосертификация галочкой при загрузке), но ждёт проверки админом
+      постфактум. «Отклонить» тут СРАЗУ удаляет группу (в отличие от
+      отклонения публикации, которое просто помечает статус) — раз фото
+      нарушает правила загрузки в комнату, держать его там незачем, отдельной
+      кнопки «Удалить» поэтому нет. Почти копия wireModerationQueue ниже —
+      тот же baseUrl-префикс картинок, та же общая кнопка «Забанить». */
+  async function wireRoomUploadQueue(id, baseUrl) {
+    const el = document.getElementById("roomUploadQueue");
+
+    async function load() {
+      let data;
+      try {
+        data = await api(`/api/services/${encodeURIComponent(id)}/moderation/room-uploads`);
+      } catch (e) {
+        el.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+        return;
+      }
+      const rows = data.photos || [];
+      if (!rows.length) { el.innerHTML = `<div class="bh-empty">Нечего проверять</div>`; return; }
+      el.innerHTML = `
+        <table class="bh-table">
+          <thead><tr><th></th><th>Название</th><th>Загрузил</th><th>Комната</th><th>Загружено</th><th></th></tr></thead>
+          <tbody>${rows.map(p => `
+            <tr data-id="${escapeHtml(p.id)}" data-owner="${escapeHtml(p.ownerUserId || "")}" data-device="${escapeHtml(p.uploadDevice || "")}">
+              <td><img class="bh-modal-thumb" src="${escapeHtml(baseUrl + p.imageUrl)}" alt="" style="width:64px;height:48px;object-fit:cover;border-radius:4px;display:block"></td>
+              <td>${escapeHtml(p.title)}</td>
+              <td><code>${escapeHtml(p.ownerUserId || "—")}</code></td>
+              <td>${escapeHtml(p.roomTitle || "—")}</td>
+              <td>${new Date(p.createdAt).toLocaleDateString("ru-RU")}</td>
+              <td class="bh-toolbar" style="margin:0">
+                <button class="bh-btn" data-action="approve">Одобрить</button>
+                <button class="bh-btn danger" data-action="reject">Отклонить</button>
+                <button class="bh-btn danger" data-action="ban">Забанить</button>
+              </td>
+            </tr>`).join("")}</tbody>
+        </table>`;
+
+      el.querySelectorAll("tr[data-id]").forEach(tr => {
+        const photoId = tr.dataset.id, ownerUserId = tr.dataset.owner, deviceId = tr.dataset.device;
+        const title = tr.children[1].textContent;
+        const setBusy = busy => tr.querySelectorAll("button").forEach(b => b.disabled = busy);
+        const btn = action => tr.querySelector(`button[data-action="${action}"]`);
+
+        const photo = rows.find(r => String(r.id) === photoId);
+        tr.querySelector("img").onclick = () => openPhotoModal(photo, baseUrl, tr, [
+          ["Загрузил", `<code>${escapeHtml(photo.ownerUserId || "—")}</code>`],
+          ["Устройство", `<code>${escapeHtml(photo.uploadDevice || "—")}</code>`],
+          ["Комната", escapeHtml(photo.roomTitle || "—")],
+          ["Согласие при загрузке", photo.consentAt ? escapeHtml(new Date(photo.consentAt).toLocaleString("ru-RU")) : "не получено"],
+          ["Вариантов сложности", String(photo.variants)],
+          ["Загружено", escapeHtml(new Date(photo.createdAt).toLocaleString("ru-RU"))],
+        ]);
+
+        btn("approve").onclick = async () => {
+          setBusy(true);
+          try { await api(`/api/services/${encodeURIComponent(id)}/moderation/room-uploads/${encodeURIComponent(photoId)}/approve`, { method: "POST" }); await load(); }
+          catch (e) { alert("Не получилось: " + e.message); setBusy(false); }
+        };
+        btn("reject").onclick = async () => {
+          const reason = prompt(`Причина отказа для «${title}» (фото будет удалено):`);
+          if (reason === null) return;
+          setBusy(true);
+          try {
+            await api(`/api/services/${encodeURIComponent(id)}/moderation/room-uploads/${encodeURIComponent(photoId)}/reject`, {
+              method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }),
+            });
+            await load();
+          } catch (e) { alert("Не получилось: " + e.message); setBusy(false); }
+        };
+        // Та же общая кнопка «Забанить» (аккаунт+устройство разом), что и в
+        // очереди публикации ниже — см. комментарий там же.
+        btn("ban").onclick = async () => {
+          if (!ownerUserId && !deviceId) {
+            alert("У этого фото нет ни владельца-аккаунта, ни device-id — банить нечего.");
+            return;
+          }
+          const lines = [`Заблокировать того, кто загрузил «${title}»?`];
+          if (ownerUserId) lines.push("— аккаунт: блокирует вход во ВСЕХ сервисах BurningHouse, не только в Puzzle");
+          if (deviceId) lines.push("— устройство: следующая загрузка с той же cookie отобьётся");
+          if (!confirm(lines.join("\n"))) return;
+          let reason;
+          if (deviceId) {
+            reason = prompt("Причина бана устройства (для лога):");
+            if (reason === null) return;
+          }
+          setBusy(true);
+          try {
+            if (ownerUserId) {
+              await api(`/api/users/${encodeURIComponent(ownerUserId)}/disabled`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on: true }) });
+            }
+            if (deviceId) {
+              await api(`/api/devices/${encodeURIComponent(deviceId)}/banned`, {
+                method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on: true, reason }),
+              });
+            }
+            alert("Забанено.");
+          } catch (e) { alert("Не получилось: " + e.message); }
+          setBusy(false);
+        };
+      });
+    }
+
+    await load();
+  }
+
   /** Вкладка «Модерация» (только Puzzle, см. Puzzle server.js
-      /internal/moderation/photos) — ВСЕ загруженные пользователями фото,
-      не только ожидающие публикации: владелец сервиса должен видеть вообще
-      всё, включая то, что осталось приватным в чьей-то комнате (см. план).
+      /internal/moderation/photos) — ЗАЯВКИ НА ПУБЛИКАЦИЮ: только фото,
+      которые хоть раз отправлялись на публикацию (см. план «Разделение
+      модерации» — фото, просто загруженные в комнату и никогда не
+      публиковавшиеся, теперь отдельная очередь, wireRoomUploadQueue выше).
       Одобрить/Отклонить — только для pending. Удалить/забанить — всегда. */
   async function wireModerationQueue(id, baseUrl) {
     const el = document.getElementById("moderationQueue");
@@ -881,7 +1041,7 @@
           <thead><tr><th></th><th>Название</th><th>Загрузил</th><th>Комната</th><th>Статус</th><th>Загружено</th><th></th></tr></thead>
           <tbody>${rows.map(p => `
             <tr data-id="${escapeHtml(p.id)}" data-owner="${escapeHtml(p.ownerUserId || "")}" data-device="${escapeHtml(p.uploadDevice || "")}">
-              <td><img src="${escapeHtml(baseUrl + p.imageUrl)}" alt="" style="width:64px;height:48px;object-fit:cover;border-radius:4px;display:block"></td>
+              <td><img class="bh-modal-thumb" src="${escapeHtml(baseUrl + p.imageUrl)}" alt="" style="width:64px;height:48px;object-fit:cover;border-radius:4px;display:block"></td>
               <td>${escapeHtml(p.title)}</td>
               <td><code>${escapeHtml(p.ownerUserId || "—")}</code></td>
               <td>${escapeHtml(p.roomTitle || "—")}</td>
@@ -904,6 +1064,19 @@
         const setBusy = busy => tr.querySelectorAll("button").forEach(b => b.disabled = busy);
 
         const btn = action => tr.querySelector(`button[data-action="${action}"]`);
+
+        const photo = rows.find(r => String(r.id) === photoId);
+        tr.querySelector("img").onclick = () => openPhotoModal(photo, baseUrl, tr, [
+          ["Загрузил", `<code>${escapeHtml(photo.ownerUserId || "—")}</code>`],
+          ["Устройство", `<code>${escapeHtml(photo.uploadDevice || "—")}</code>`],
+          ["Комната", escapeHtml(photo.roomTitle || "—")],
+          ["Согласие при загрузке", photo.consentAt ? escapeHtml(new Date(photo.consentAt).toLocaleString("ru-RU")) : "не получено"],
+          ["Вариантов сложности", String(photo.variants)],
+          ["Статус публикации", MODERATION_STATUS_LABEL[photo.moderationStatus] || '<span class="bh-badge">—</span>'],
+          ...(photo.moderationReason ? [["Причина", escapeHtml(photo.moderationReason)]] : []),
+          ["Загружено", escapeHtml(new Date(photo.createdAt).toLocaleString("ru-RU"))],
+        ]);
+
         if (btn("approve")) btn("approve").onclick = async () => {
           if (!confirm(`Опубликовать «${title}» в общую библиотеку без входа?`)) return;
           setBusy(true);

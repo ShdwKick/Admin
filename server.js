@@ -504,6 +504,43 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      // Фоновая модерация ЗАГРУЗКИ В КОМНАТУ (см. Puzzle server.js
+      // /internal/moderation/room-uploads/*, план «Разделение модерации:
+      // загрузка в комнату vs публикация + письма») — отдельная очередь от
+      // заявок на публикацию выше, тот же паттерн проксирования.
+      const roomUploadsMatch = p.match(/^\/api\/services\/([\w-]+)\/moderation\/room-uploads$/);
+      if (roomUploadsMatch && method === "GET") {
+        const service = SERVICES.find(s => s.id === roomUploadsMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        try { return json(res, 200, await callService(service, "/internal/moderation/room-uploads")); }
+        catch (e) { return json(res, 502, { error: "upstream", message: e.message }); }
+      }
+      const roomUploadApproveMatch = p.match(/^\/api\/services\/([\w-]+)\/moderation\/room-uploads\/([\w-]+)\/approve$/);
+      if (roomUploadApproveMatch && method === "POST") {
+        const service = SERVICES.find(s => s.id === roomUploadApproveMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        try {
+          const data = await callService(service, `/internal/moderation/room-uploads/${encodeURIComponent(roomUploadApproveMatch[2])}/approve`, { method: "POST" });
+          logSelf("info", "Admin-действие: одобрена загрузка в комнату", { service: service.id, by: admin.username, photoId: roomUploadApproveMatch[2] });
+          return json(res, 200, data);
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+      const roomUploadRejectMatch = p.match(/^\/api\/services\/([\w-]+)\/moderation\/room-uploads\/([\w-]+)\/reject$/);
+      if (roomUploadRejectMatch && method === "POST") {
+        const service = SERVICES.find(s => s.id === roomUploadRejectMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        const body = await readJsonBody(req);
+        try {
+          const data = await callService(service, `/internal/moderation/room-uploads/${encodeURIComponent(roomUploadRejectMatch[2])}/reject`, { method: "POST", body });
+          logSelf("warn", "Admin-действие: отклонена загрузка в комнату (удалено)", { service: service.id, by: admin.username, photoId: roomUploadRejectMatch[2], reason: body.reason });
+          return json(res, 200, data);
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+
       // Модерация пользовательских категорий (см. Puzzle server.js
       // /internal/moderation/categories/*, план «Категории many-to-many») —
       // тот же паттерн, что у модерации фото выше.
