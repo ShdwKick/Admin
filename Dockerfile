@@ -17,11 +17,19 @@ RUN set -e; \
     done; \
     node --check server.js && node --check auth-client.js && node --check mailer.js
 
+# Каталог данных: health-state.json (см. server.js). В контейнере он
+# смонтирован томом — см. docker-compose.yml. Создаём и отдаём node:node
+# ДО USER node — том создаётся на первом старте от рута и без этого
+# mkdirSync в server.js падает EACCES (см. Puzzle/Dockerfile, тот же приём).
+RUN mkdir -p /app/data && chown -R node:node /app
+
 USER node
 
 ENV HOST=0.0.0.0
 ENV PORT=8793
+ENV DATA_DIR=/app/data
 
 EXPOSE 8793
+VOLUME ["/app/data"]
 
 CMD ["node", "server.js"]
