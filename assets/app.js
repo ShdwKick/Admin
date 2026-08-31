@@ -743,7 +743,8 @@
     el.innerHTML = `
       <div class="bh-section-title">Категории</div>
       <div class="bh-toolbar">
-        <input type="text" class="bh-input-narrow" id="categoryCreateName" placeholder="Название категории">
+        <input type="text" class="bh-input-narrow" id="categoryCreateName" placeholder="Название категории (люди видят это)">
+        <input type="text" class="bh-input-narrow" id="categoryCreateSlug" placeholder="Алиас — необязательно (в пути, напр. cats)" style="width:14em">
         <button class="bh-btn" id="categoryCreateBtn">Создать</button>
       </div>
       <div id="categoryListBox"></div>
@@ -797,19 +798,47 @@
       }
       categories = data.categories || [];
       uploadCategoriesBox.innerHTML = categoryCheckboxesHtml("puzzleUploadCategory", []);
+      // slug — технический алиас (см. план «Алиас и публичное название
+      // категории»): люди на странице видят name, slug идёт только в путь
+      // (/category/:slug) — тут показываем оба, moderate-серым, чтобы не
+      // спорил визуально с самим названием.
       categoryListBox.innerHTML = categories.length
         ? categories.map(c => `
             <span class="bh-badge${c.status !== "approved" ? " " + c.status : ""}" data-id="${escapeHtml(c.id)}" style="display:inline-flex;align-items:center;gap:.4em;margin:.2em .3em .2em 0">
               ${escapeHtml(c.name)}${c.status !== "approved" ? ` (${c.status === "pending" ? "на модерации" : "отклонена"})` : ""}
+              <span style="font-family:monospace;font-size:.85em;opacity:.7">/${escapeHtml(c.slug || "")}</span>
+              <button class="bh-btn" data-action="edit-category" style="padding:.1em .5em" title="Изменить название/алиас">✎</button>
               <button class="bh-btn danger" data-action="delete-category" style="padding:.1em .5em">×</button>
             </span>`).join("")
         : `<div class="bh-empty">Пока нет ни одной категории</div>`;
+      categoryListBox.querySelectorAll("button[data-action='edit-category']").forEach(btn => {
+        btn.onclick = async () => {
+          const cid = btn.closest("span").dataset.id;
+          const cat = categories.find(x => x.id === cid);
+          if (!cat) return;
+          const newName = prompt("Название категории (видят люди на странице):", cat.name);
+          if (newName === null) return; // отмена
+          const newSlug = prompt("Алиас (технический, идёт в путь /category/…):", cat.slug || "");
+          if (newSlug === null) return;
+          const body = {};
+          if (newName.trim() && newName.trim() !== cat.name) body.name = newName.trim();
+          if (newSlug.trim() && newSlug.trim() !== cat.slug) body.slug = newSlug.trim();
+          if (!Object.keys(body).length) return; // ничего не поменяли
+          try {
+            await api(`/api/services/${encodeURIComponent(id)}/categories/${encodeURIComponent(cid)}`, {
+              method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+            });
+            await loadCategories();
+            await loadList();
+          } catch (e) { alert("Не получилось: " + e.message); }
+        };
+      });
       categoryListBox.querySelectorAll("button[data-action='delete-category']").forEach(btn => {
         btn.onclick = async () => {
           const span = btn.closest("span");
           const cid = span.dataset.id;
-          const name = span.textContent.trim().replace(/×$/, "").trim();
-          if (!confirm(`Удалить категорию «${name}»? Картинки этой категории останутся, просто потеряют эту метку.`)) return;
+          const cat = categories.find(x => x.id === cid);
+          if (!confirm(`Удалить категорию «${cat ? cat.name : cid}»? Картинки этой категории останутся, просто потеряют эту метку.`)) return;
           try {
             await api(`/api/services/${encodeURIComponent(id)}/categories/${encodeURIComponent(cid)}`, { method: "DELETE" });
             await loadCategories();
@@ -942,13 +971,18 @@
 
     document.getElementById("categoryCreateBtn").onclick = async () => {
       const input = document.getElementById("categoryCreateName");
+      const slugInput = document.getElementById("categoryCreateSlug");
       const name = input.value.trim();
+      const slug = slugInput.value.trim();
       if (!name) { alert("Укажите название категории."); return; }
       try {
+        // slug — необязательное поле (см. план «Алиас и публичное название
+        // категории»): не заполнили — сервер сам выведет его из name.
         await api(`/api/services/${encodeURIComponent(id)}/categories`, {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }),
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(slug ? { name, slug } : { name }),
         });
         input.value = "";
+        slugInput.value = "";
         await loadCategories();
         await loadList(); // подтягивает новую категорию и в фильтр, и в чекбоксы строк
       } catch (e) { alert("Не получилось: " + e.message); }

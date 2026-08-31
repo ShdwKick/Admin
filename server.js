@@ -626,7 +626,7 @@ const server = http.createServer(async (req, res) => {
           if (method === "GET") return json(res, 200, await callService(service, "/internal/categories"));
           const body = await readJsonBody(req);
           const data = await callService(service, "/internal/categories", { method: "POST", body });
-          logSelf("info", "Admin-действие: создана категория", { service: service.id, by: admin.username, name: body.name });
+          logSelf("info", "Admin-действие: создана категория", { service: service.id, by: admin.username, name: body.name, slug: body.slug });
           return json(res, 200, data);
         } catch (e) {
           return json(res, 502, { error: "upstream", message: e.message });
@@ -639,6 +639,21 @@ const server = http.createServer(async (req, res) => {
         try {
           const data = await callService(service, `/internal/categories/${encodeURIComponent(categoryDeleteMatch[2])}`, { method: "DELETE" });
           logSelf("info", "Admin-действие: удалена категория", { service: service.id, by: admin.username, categoryId: categoryDeleteMatch[2] });
+          return json(res, 200, data);
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+      // Правка имени/алиаса категории (см. Puzzle server.js, план «Алиас и
+      // публичное название категории») — тот же путь, что DELETE выше,
+      // просто другой метод, тело {name?, slug?} прокидывается как есть.
+      if (categoryDeleteMatch && method === "PATCH") {
+        const service = SERVICES.find(s => s.id === categoryDeleteMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        const body = await readJsonBody(req);
+        try {
+          const data = await callService(service, `/internal/categories/${encodeURIComponent(categoryDeleteMatch[2])}`, { method: "PATCH", body });
+          logSelf("info", "Admin-действие: изменена категория", { service: service.id, by: admin.username, categoryId: categoryDeleteMatch[2], name: body.name, slug: body.slug });
           return json(res, 200, data);
         } catch (e) {
           return json(res, 502, { error: "upstream", message: e.message });
