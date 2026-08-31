@@ -86,6 +86,15 @@ main{ flex:1; padding:1rem 1.5rem 3rem; max-width:72rem; margin:0 auto; width:10
 
 .bh-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(15rem,1fr)); gap:1rem; }
 
+/* Баннер health-check на «Обзоре» (см. wireHealthBanner в app.js) —
+   .danger для реальной непризнанной проблемы, обычный вид — для
+   подтверждённой (приостановленные письма) и для «пора снять отметку». */
+.bh-alert{
+  background:var(--card-bg); border:1px solid var(--card-border); border-left:3px solid var(--ink-dim);
+  border-radius:.5rem; padding:.7rem .9rem; font-size:.88rem; color:var(--ink-dim);
+}
+.bh-alert.danger{ border-left-color:var(--danger); color:var(--ink); }
+
 .bh-card{
   background:var(--card-bg); border:1px solid var(--card-border); border-radius:.9rem;
   padding:1.1rem 1.25rem;

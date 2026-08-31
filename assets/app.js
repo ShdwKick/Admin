@@ -167,7 +167,74 @@
   async function renderOverview(body) {
     const data = await api("/api/overview");
     if (!data.services.length) { body.innerHTML = `<div class="bh-empty">Сервисы не настроены (SERVICES_JSON)</div>`; return; }
-    body.innerHTML = `<div class="bh-grid">${data.services.map(cardHtml).join("")}</div>`;
+    body.innerHTML = `<div id="healthBanner"></div><div class="bh-grid">${data.services.map(cardHtml).join("")}</div>`;
+    wireHealthBanner();
+  }
+
+  /** Баннер health-check (см. Admin/server.js runHealthCheck) — раз в час
+      сервер сам проверяет доступность всех сервисов и шлёт письмо админам,
+      если кто-то не отвечает; тут просто показываем то же состояние и даём
+      кнопки «Проверить сейчас» / отметить проблему известной. Отметка не
+      снимается сама при восстановлении сервиса — так и просили: письма
+      возобновляются только когда админ явно снимет отметку. */
+  async function wireHealthBanner() {
+    const el = document.getElementById("healthBanner");
+    if (!el) return; // ушли со страницы, пока грузилось
+
+    async function load() {
+      let state;
+      try {
+        state = await api("/api/health-check");
+      } catch {
+        el.innerHTML = ""; // необязательная фича — молча не показываем баннер, если ручка недоступна
+        return;
+      }
+      const down = (state.lastResults || []).filter(r => !r.ok);
+      const checkedAt = state.lastCheckAt ? new Date(state.lastCheckAt).toLocaleString("ru-RU") : null;
+
+      const ackBtnHtml = down.length
+        ? `<button class="bh-btn ${state.acknowledged ? "" : "danger"}" id="healthAckBtn">${state.acknowledged ? "Возобновить оповещения" : "Отметить как известную проблему"}</button>`
+        : (state.acknowledged ? `<button class="bh-btn" id="healthAckBtn">Снять отметку «известная проблема»</button>` : "");
+
+      let banner = "";
+      if (down.length) {
+        const list = down.map(d => `${escapeHtml(d.name)} — ${escapeHtml(d.error || "недоступен")}`).join("; ");
+        banner = state.acknowledged
+          ? `<div class="bh-alert">Известная проблема (письма приостановлены): ${list}. Отметил ${escapeHtml(state.acknowledgedBy || "—")} ${state.acknowledgedAt ? new Date(state.acknowledgedAt).toLocaleString("ru-RU") : ""}.</div>`
+          : `<div class="bh-alert danger">Недоступны: ${list}</div>`;
+      } else if (state.acknowledged) {
+        banner = `<div class="bh-alert">Все сервисы отвечают, но отметка «известная проблема» всё ещё стоит — можно снять.</div>`;
+      }
+
+      el.innerHTML = `
+        ${banner}
+        <div class="bh-toolbar" style="margin-top:${banner ? ".5rem" : "0"}">
+          ${ackBtnHtml}
+          <button class="bh-btn" id="healthRunBtn">Проверить сейчас</button>
+          <span class="bh-empty" style="padding:0">${checkedAt ? `Проверено: ${checkedAt}` : "Ещё не проверялось"}</span>
+        </div>
+      `;
+
+      const ackBtn = document.getElementById("healthAckBtn");
+      if (ackBtn) ackBtn.onclick = async () => {
+        ackBtn.disabled = true;
+        try {
+          await api("/api/health-check/acknowledge", {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on: !state.acknowledged }),
+          });
+          await load();
+        } catch (e) { alert("Не получилось: " + e.message); ackBtn.disabled = false; }
+      };
+      document.getElementById("healthRunBtn").onclick = async () => {
+        const btn = document.getElementById("healthRunBtn");
+        btn.disabled = true;
+        btn.textContent = "Проверяю…";
+        try { await api("/api/health-check/run", { method: "POST" }); await load(); }
+        catch (e) { alert("Не получилось: " + e.message); btn.disabled = false; btn.textContent = "Проверить сейчас"; }
+      };
+    }
+
+    await load();
   }
 
   function cardHtml(s) {

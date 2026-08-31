@@ -17,6 +17,12 @@ services:
       # 503. Реальное значение — в .env рядом с этим compose (см. README,
       # тот же приём, что у ADMIN_INTERNAL_KEY на проде), сюда не хардкодить.
       PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+      # Health-check по расписанию (см. server.js runHealthCheck) — раз в час
+      # проверяет сервисы и без RESEND_API_KEY просто логирует письмо вместо
+      # отправки, сам health-check при этом всё равно считается и хранится.
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      MAIL_FROM: BurningHouse <noreply@burninghouse.ru>
+      PUBLIC_URL: http://localhost:8793
       SERVICES_JSON: >-
         [{"id":"auth","name":"Вход","baseUrl":"http://localhost:8788"},
          {"id":"finance","name":"Мои финансы","baseUrl":"http://localhost:8787"},
@@ -25,5 +31,11 @@ services:
          {"id":"puzzle","name":"Что собираем?","baseUrl":"http://localhost:8796"}]
     ports:
       - "127.0.0.1:8793:8793"
+    volumes:
+      - admin-data:/app/data
 
-# Данных не хранит — volume не нужен.
+# Единственное, что тут хранится — флаг «известная проблема» и последний
+# результат health-check (см. server.js) — переживает рестарт/редеплой,
+# остальной Admin по-прежнему без своей базы.
+volumes:
+  admin-data:

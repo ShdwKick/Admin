@@ -23,6 +23,14 @@ services:
       # отвечает 503, остальной Admin работает как обычно. Тот же приём,
       # что у ADMIN_INTERNAL_KEY — значение в .env, сюда не хардкодить.
       PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+      # Health-check по расписанию (см. server.js runHealthCheck) — раз в час
+      # проверяет сервисы из SERVICES_JSON, письмо шлёт только если кто-то не
+      # ответил. Тот же RESEND_API_KEY/MAIL_FROM, что у Trip — своя запись в
+      # .env ЭТОГО сервиса всё равно нужна, .env между сервисами не общий,
+      # даже если значение то же самое.
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      MAIL_FROM: ${MAIL_FROM:-BurningHouse <noreply@burninghouse.ru>}
+      PUBLIC_URL: https://admin.burninghouse.ru
       # Какие сервисы показывать. Один из них обязан иметь id "auth" —
       # через него идёт управление пользователями.
       SERVICES_JSON: >-
@@ -39,3 +47,11 @@ services:
     ports:
       # Только на localhost — наружу отдаёт nginx на 443 (см. deploy/nginx-admin-443.conf).
       - "127.0.0.1:8793:8793"
+    volumes:
+      - admin-data:/app/data
+
+# Единственное, что тут хранится — флаг «известная проблема» и последний
+# результат health-check (см. server.js) — переживает рестарт/редеплой,
+# остальной Admin по-прежнему без своей базы.
+volumes:
+  admin-data:

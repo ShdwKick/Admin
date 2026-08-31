@@ -36,6 +36,25 @@
  *     Ключ живёт только тут: сама загрузка в Puzzle идёт через уже
  *     существующий POST /api/services/:id/puzzles (см. ниже), Puzzle про
  *     Pexels вообще не знает.
+ *
+ * Health-check по расписанию (см. runHealthCheck ниже) — раз в
+ * HEALTH_CHECK_INTERVAL_MS дёргает /internal/stats у каждого сервиса из
+ * SERVICES_JSON (та же проверка, что у /api/overview) и, если хоть один не
+ * ответил, шлёт письмо всем админам (см. Auth /internal/users, поле admin).
+ * Пока все живы — писем нет вовсе. Это ЕДИНСТВЕННОЕ состояние, которое Admin
+ * хранит на диске (см. DATA_DIR) — весь остальной сервис как был, так и
+ * остался без своей базы.
+ *
+ *   DATA_DIR         (по умолчанию ./data) — health-state.json: флаг
+ *     «проблема известна, чинится» и последний результат проверки. Только
+ *     это и переживает рестарт/редеплой — остальным Admin по-прежнему не
+ *     обзаводится.
+ *   HEALTH_CHECK_INTERVAL_MS (по умолчанию 3600000 = 1 час)
+ *   RESEND_API_KEY, MAIL_FROM — см. mailer.js. Без RESEND_API_KEY письма
+ *     просто логируются, health-check при этом всё равно считается и
+ *     хранится — только реальная отправка выключена.
+ *   PUBLIC_URL       необязательно, напр. https://admin.burninghouse.ru —
+ *     ссылка на «Обзор» внутри письма. Без него письмо просто без ссылки.
  */
 "use strict";
 
@@ -54,6 +73,13 @@ const AUTH_BASE = (process.env.AUTH_BASE || AUTH_ISSUER).replace(/\/+$/, "");
 const ADMIN_INTERNAL_KEY = process.env.ADMIN_INTERNAL_KEY || "";
 const PEXELS_API_KEY = process.env.PEXELS_API_KEY || "";
 if (!PEXELS_API_KEY) console.warn("PEXELS_API_KEY не задан — вкладка «Импорт» у Puzzle отвечает 503.");
+
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
+const HEALTH_STATE_PATH = path.join(DATA_DIR, "health-state.json");
+const HEALTH_CHECK_INTERVAL_MS = parseInt(process.env.HEALTH_CHECK_INTERVAL_MS || String(60 * 60 * 1000), 10);
+const PUBLIC_URL = (process.env.PUBLIC_URL || "").replace(/\/+$/, "");
+const mailer = require("./mailer");
+fs.mkdirSync(DATA_DIR, { recursive: true });
 
 if (!AUTH_ISSUER) {
   console.error("Не задан AUTH_ISSUER — без него нечем проверять токены. Укажите адрес auth-сервиса, напр. AUTH_ISSUER=https://auth.burninghouse.ru");
@@ -188,8 +214,10 @@ function serveStatic(res, pathname) {
   return true;
 }
 
-// Свой лог — только последние события этого процесса, в памяти. Данные Admin
-// не хранит нигде, а тут важна не история, а «что пошло не так только что».
+// Свой лог — только последние события этого процесса, в памяти. Из
+// постоянных данных у Admin теперь только health-state.json (см. ниже) —
+// историю запросов/действий по-прежнему нигде не хранит, тут важно
+// «что пошло не так только что», не история.
 const SELF_LOG_LIMIT = 200;
 const selfLog = [];
 function logSelf(level, message, meta) {
@@ -198,6 +226,82 @@ function logSelf(level, message, meta) {
   const out = level === "error" ? console.error : level === "warn" ? console.warn : console.log;
   out(`[${level}]`, message, meta || "");
 }
+
+// ---------- health-check по расписанию ----------
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// Флаг acknowledged переживает рестарт/редеплой контейнера (иначе Watchtower
+// молча сбрасывал бы его при каждом обновлении образа, а обновления у Admin
+// частые) — единственное, что Admin пишет на диск. Формат простой настолько,
+// что для него не стали заводить SQLite ради одного объекта.
+let healthState = {
+  acknowledged: false, acknowledgedBy: null, acknowledgedAt: null,
+  lastCheckAt: null, lastResults: [], lastAlertSentAt: null,
+};
+try {
+  healthState = { ...healthState, ...JSON.parse(fs.readFileSync(HEALTH_STATE_PATH, "utf8")) };
+} catch { /* первый запуск или файл повреждён — остаёмся на дефолте */ }
+
+function saveHealthState() {
+  try { fs.writeFileSync(HEALTH_STATE_PATH, JSON.stringify(healthState)); }
+  catch (e) { logSelf("error", "Не удалось сохранить health-state.json", { message: e.message }); }
+}
+
+async function sendHealthAlert(down) {
+  if (!AUTH_SERVICE) { logSelf("error", "Health-check: не задан AUTH_SERVICE, письмо о недоступности не отправлено"); return; }
+  let admins;
+  try {
+    const data = await callService(AUTH_SERVICE, "/internal/users");
+    admins = (data.users || []).filter(u => u.admin && !u.disabled && u.email);
+  } catch (e) {
+    logSelf("error", "Health-check: не удалось получить список админов для письма", { message: e.message });
+    return;
+  }
+  if (!admins.length) { logSelf("warn", "Health-check: недоступные сервисы есть, но ни одного админа с email — письмо некому слать"); return; }
+
+  const overviewLink = PUBLIC_URL ? `${PUBLIC_URL}/#overview` : null;
+  const rows = down.map(d => ({ name: d.name, reason: d.error || "недоступен" }));
+  const subject = down.length === 1
+    ? `BurningHouse: «${rows[0].name}» недоступен`
+    : `BurningHouse: ${down.length} сервисов недоступны`;
+  const html = `
+    <p>Проверка сервисов BurningHouse обнаружила проблему:</p>
+    <ul>${rows.map(r => `<li><b>${escapeHtml(r.name)}</b> — ${escapeHtml(r.reason)}</li>`).join("")}</ul>
+    <p>Повторные письма приостановятся, если отметить проблему как известную в Admin${overviewLink ? ` (<a href="${escapeHtml(overviewLink)}">Обзор</a>)` : ""} — и возобновятся только когда кто-то из админов снимет эту отметку сам.</p>
+  `;
+  const text = `Проверка сервисов BurningHouse обнаружила проблему:\n${rows.map(r => `- ${r.name} — ${r.reason}`).join("\n")}\n\n` +
+    `Повторные письма приостановятся, если отметить проблему как известную в Admin${overviewLink ? ` (${overviewLink})` : ""} — и возобновятся только когда админ снимет эту отметку сам.`;
+
+  await Promise.all(admins.map(a => mailer.send({ to: a.email, subject, html, text })));
+  healthState.lastAlertSentAt = Date.now();
+  saveHealthState();
+  logSelf("warn", "Health-check: письмо о недоступности отправлено", { down: down.map(d => d.id), to: admins.map(a => a.email) });
+}
+
+async function runHealthCheck() {
+  const results = await Promise.all(SERVICES.map(fetchServiceStats));
+  const down = results.filter(r => !r.ok);
+  healthState.lastCheckAt = Date.now();
+  healthState.lastResults = results.map(r => ({ id: r.id, name: r.name, ok: r.ok, error: r.error || null }));
+  saveHealthState();
+  if (!down.length) return;
+  if (healthState.acknowledged) {
+    logSelf("info", "Health-check: есть недоступные сервисы, но проблема отмечена как известная — письмо не шлём", { down: down.map(d => d.id) });
+    return;
+  }
+  await sendHealthAlert(down);
+}
+
+// Первая проверка — вскоре после старта (не мгновенно: даём auth.warmup()
+// и самим сервисам время подняться при одновременном докатывании стека),
+// дальше — раз в HEALTH_CHECK_INTERVAL_MS. setInterval, не рекурсивный
+// setTimeout: карта дежурства не должна дрейфовать от времени самого
+// запроса — раз в час значит раз в час, а не «час после конца предыдущего».
+setTimeout(() => { runHealthCheck().catch(e => logSelf("error", "Health-check упал", { message: e.message })); }, 15000);
+setInterval(() => { runHealthCheck().catch(e => logSelf("error", "Health-check упал", { message: e.message })); }, HEALTH_CHECK_INTERVAL_MS);
 
 // ---------- сервер ----------
 
@@ -226,6 +330,34 @@ const server = http.createServer(async (req, res) => {
       if (p === "/api/overview" && method === "GET") {
         const results = await Promise.all(SERVICES.map(fetchServiceStats));
         return json(res, 200, { services: results, self: { logs: selfLog.slice(-20) } });
+      }
+
+      // Состояние health-check для баннера на «Обзоре» — см. runHealthCheck.
+      if (p === "/api/health-check" && method === "GET") {
+        return json(res, 200, healthState);
+      }
+      // «Проверить сейчас» — та же runHealthCheck, что и по расписанию, просто
+      // по кнопке: удобно проверить, что письмо реально уходит, не дожидаясь часа.
+      if (p === "/api/health-check/run" && method === "POST") {
+        try {
+          await runHealthCheck();
+          logSelf("info", "Admin-действие: health-check запущен вручную", { by: admin.username });
+          return json(res, 200, healthState);
+        } catch (e) {
+          return json(res, 500, { error: "health_check_failed", message: e.message });
+        }
+      }
+      // Отметка «проблема известна, чинится» — гасит письма, пока кто-то из
+      // админов не снимет её сам (см. runHealthCheck: не авто-сбрасывается
+      // при восстановлении сервисов — так и просили).
+      if (p === "/api/health-check/acknowledge" && method === "POST") {
+        const body = await readJsonBody(req);
+        healthState.acknowledged = !!body.on;
+        healthState.acknowledgedBy = healthState.acknowledged ? admin.username : null;
+        healthState.acknowledgedAt = healthState.acknowledged ? Date.now() : null;
+        saveHealthState();
+        logSelf("info", `Admin-действие: проблема ${healthState.acknowledged ? "отмечена как известная" : "снята с отметки"}`, { by: admin.username });
+        return json(res, 200, healthState);
       }
 
       // Тот же снимок, но для одного сервиса — страница его подробностей.
