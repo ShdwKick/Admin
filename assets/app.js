@@ -861,19 +861,31 @@
           <thead><tr><th></th><th>Название</th><th>Категории</th><th>Вариантов</th><th>Добавлено</th><th></th></tr></thead>
           <tbody>${rows.map(p => `
             <tr data-id="${escapeHtml(p.id)}">
-              <td><img src="${escapeHtml(baseUrl + p.imageUrl)}" alt="" style="width:48px;height:36px;object-fit:cover;border-radius:4px;display:block"></td>
+              <td><img class="bh-modal-thumb" src="${escapeHtml(baseUrl + p.imageUrl)}" alt="" style="width:48px;height:36px;object-fit:cover;border-radius:4px;display:block"></td>
               <td><input type="text" class="bh-input-narrow" data-role="title" value="${escapeHtml(p.title)}" style="width:11em"></td>
               <td>
                 <div data-role="categories">${categoryCheckboxesHtml("rowCategory-" + escapeHtml(p.id), p.categoryIds || [])}</div>
               </td>
               <td>${p.variants}</td>
               <td>${new Date(p.createdAt).toLocaleDateString("ru-RU")}</td>
-              <td>
+              <td class="bh-toolbar" style="margin:0">
                 <button class="bh-btn" data-action="save">Сохранить</button>
                 <button class="bh-btn danger" data-action="delete">Удалить</button>
               </td>
             </tr>`).join("")}</tbody>
         </table>`;
+      // Клик по миниатюре — та же модалка «фото целиком», что и в очередях
+      // модерации (см. openPhotoModal выше): 48px мало, чтобы разглядеть,
+      // что за картинка, особенно после массового импорта с Pexels.
+      listBox.querySelectorAll("tr[data-id]").forEach(tr => {
+        const p = rows.find(r => String(r.id) === tr.dataset.id);
+        if (!p) return;
+        tr.querySelector("img").onclick = () => openPhotoModal(p, baseUrl, tr, [
+          ["Категории", (p.categoryIds || []).map(cid => categories.find(c => c.id === cid)).filter(Boolean).map(c => escapeHtml(c.name)).join(", ") || "—"],
+          ["Вариантов сложности", String(p.variants)],
+          ["Добавлено", escapeHtml(new Date(p.createdAt).toLocaleString("ru-RU"))],
+        ]);
+      });
       listBox.querySelectorAll("button[data-action='delete']").forEach(btn => {
         btn.onclick = async () => {
           const tr = btn.closest("tr");
@@ -1018,10 +1030,12 @@
   /** Импорт из Pexels (см. Admin/server.js /api/pexels/search и
       /api/services/:id/pexels/import, PEXELS_API_KEY) — быстрое наполнение
       дефолтной библиотеки: находим фото по запросу, отмечаем нужные, разом
-      закидываем в библиотеку с общим набором категорий. Название пазла
-      берётся из alt-текста Pexels — редактировать его тут негде, это
-      быстрое накидывание болванок, точечная правка названия/категорий уже
-      есть в таблице на вкладке «Библиотека» после импорта. */
+      закидываем в библиотеку с общим набором категорий. Название пазла —
+      alt-текст Pexels, а если его нет (частый случай) — название первой
+      выбранной категории + номер по счёту в этом импорте, не голое
+      "Библиотека"/общая заглушка. Редактировать тут негде, это быстрое
+      накидывание болванок, точечная правка названия/категорий уже есть в
+      таблице на вкладке «Библиотека» после импорта. */
   async function wirePexelsImport(id) {
     const el = document.getElementById("pexelsImport");
     el.innerHTML = `
@@ -1046,6 +1060,7 @@
     const importBtn = document.getElementById("pexelsImportBtn");
     const importResultEl = document.getElementById("pexelsImportResult");
     let photos = []; // последний результат поиска — для сопоставления с чекбоксами при импорте
+    let categories = []; // полный список — нужен ниже, чтобы взять русское name категории для болванки-названия
 
     async function loadCategories() {
       let data;
@@ -1055,6 +1070,7 @@
         categoriesBox.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
         return;
       }
+      categories = data.categories || [];
       const approved = (data.categories || []).filter(c => c.status === "approved");
       categoriesBox.innerHTML = approved.length
         ? approved.map(c => `
@@ -1123,17 +1139,26 @@
       const checkedIds = [...resultsEl.querySelectorAll("input:checked")].map(cb => cb.value);
       if (!checkedIds.length) return;
       const categoryIds = [...categoriesBox.querySelectorAll("input:checked")].map(cb => cb.value);
+      // Болванка для фото без alt-текста у Pexels — название первой выбранной
+      // категории (человекочитаемое name, не технический slug — см. план
+      // «Алиас и публичное название категории») плюс порядковый номер внутри
+      // этого импорта, вместо голого "Библиотека"/общей заглушки: хоть
+      // как-то понятно, что это, ещё до того как кто-то откроет и переименует.
+      const firstCategoryName = categoryIds.length
+        ? (categories.find(c => c.id === categoryIds[0]) || {}).name
+        : null;
       importBtn.disabled = true;
-      let done = 0, failed = 0;
+      let done = 0, failed = 0, untitledCount = 0;
       for (const photoId of checkedIds) {
         const photo = photos.find(ph => String(ph.id) === photoId);
+        const title = photo.alt || `${firstCategoryName || "Пазл с Pexels"} ${++untitledCount}`;
         importResultEl.innerHTML = `<div class="bh-empty">Импортирую ${done + failed + 1} из ${checkedIds.length}…</div>`;
         try {
           await api(`/api/services/${encodeURIComponent(id)}/pexels/import`, {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               importUrl: photo.importUrl, width: photo.width, height: photo.height,
-              title: photo.alt || "Пазл с Pexels", categoryIds,
+              title, categoryIds,
             }),
           });
           done++;
