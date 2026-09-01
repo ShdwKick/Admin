@@ -25,6 +25,23 @@
 
   const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+  // ───────────────────────── тема ─────────────────────────
+  // Тот же приём, что у Trip/Movies/Финансов: data-theme на <html>,
+  // localStorage — на этот сервис, CSS-переменные (--dawn-1/2 и
+  // :root[data-theme="light"]) уже были готовы в styles.css/brand.css,
+  // не хватало только кнопки и этого переключателя. До auth и любых await —
+  // чтобы применилось на первом кадре, а не после /api/config и SSO.
+  const SUN = '<svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+  const MOON = '<svg class="icon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
+  const themeBtn = document.getElementById("themeBtn");
+  function applyTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("admin.theme", theme);
+    themeBtn.innerHTML = theme === "dark" ? SUN : MOON;
+  }
+  themeBtn.onclick = () => applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+  applyTheme(localStorage.getItem("admin.theme") || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+
   window.addEventListener("scroll", () => appbar.classList.toggle("scrolled", window.scrollY > 4), { passive: true });
 
   const cfg = await (await fetch("/api/config")).json();
@@ -1550,10 +1567,11 @@
       if (!rows.length) { el.innerHTML = `<div class="bh-empty">Нет категорий на модерации</div>`; return; }
       el.innerHTML = `
         <table class="bh-table">
-          <thead><tr><th>Название</th><th>Предложил</th><th>Когда</th><th></th></tr></thead>
+          <thead><tr><th>Название</th><th>Алиас</th><th>Предложил</th><th>Когда</th><th></th></tr></thead>
           <tbody>${rows.map(c => `
-            <tr data-id="${escapeHtml(c.id)}">
+            <tr data-id="${escapeHtml(c.id)}" data-slug="${escapeHtml(c.slug || "")}">
               <td>${escapeHtml(c.name)}</td>
+              <td><code>${escapeHtml(c.slug || "—")}</code></td>
               <td><code>${escapeHtml(c.createdBy || "—")}</code></td>
               <td>${new Date(c.createdAt).toLocaleDateString("ru-RU")}</td>
               <td class="bh-toolbar" style="margin:0">
@@ -1566,9 +1584,21 @@
         const categoryId = tr.dataset.id;
         const name = tr.children[0].textContent;
         const setBusy = busy => tr.querySelectorAll("button").forEach(b => b.disabled = busy);
+        // Алиас уже сгенерирован автоматом из названия (см. Puzzle server.js
+        // makeUniqueSlug) — тут можно сразу поправить при одобрении, чтобы
+        // не заходить потом отдельно редактировать уже одобренную категорию
+        // (см. ✎ на вкладке «Библиотека»). Пустое поле/отмена — оставляем
+        // автосгенерированный как есть.
         tr.querySelector("button[data-action='approve']").onclick = async () => {
+          const slug = prompt(`Алиас для категории «${name}» (технический, идёт в путь /category/…):`, tr.dataset.slug);
+          if (slug === null) return;
           setBusy(true);
-          try { await api(`/api/services/${encodeURIComponent(id)}/moderation/categories/${encodeURIComponent(categoryId)}/approve`, { method: "POST" }); await load(); }
+          try {
+            await api(`/api/services/${encodeURIComponent(id)}/moderation/categories/${encodeURIComponent(categoryId)}/approve`, {
+              method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(slug.trim() ? { slug: slug.trim() } : {}),
+            });
+            await load();
+          }
           catch (e) { alert("Не получилось: " + e.message); setBusy(false); }
         };
         tr.querySelector("button[data-action='reject']").onclick = async () => {

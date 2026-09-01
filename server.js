@@ -790,9 +790,14 @@ const server = http.createServer(async (req, res) => {
       if (modCategoryApproveMatch && method === "POST") {
         const service = SERVICES.find(s => s.id === modCategoryApproveMatch[1]);
         if (!service) return json(res, 404, { error: "unknown_service" });
+        // body — необязательный {slug}: можно поправить алиас сразу при
+        // одобрении, не заходя потом отдельно редактировать (см. app.js
+        // wireCategoryModerationQueue). Без него сервис оставляет
+        // автосгенерированный slug как есть.
+        const body = await readJsonBody(req);
         try {
-          const data = await callService(service, `/internal/moderation/categories/${encodeURIComponent(modCategoryApproveMatch[2])}/approve`, { method: "POST" });
-          logSelf("info", "Admin-действие: одобрена категория", { service: service.id, by: admin.username, categoryId: modCategoryApproveMatch[2] });
+          const data = await callService(service, `/internal/moderation/categories/${encodeURIComponent(modCategoryApproveMatch[2])}/approve`, { method: "POST", body });
+          logSelf("info", "Admin-действие: одобрена категория", { service: service.id, by: admin.username, categoryId: modCategoryApproveMatch[2], slug: body.slug });
           return json(res, 200, data);
         } catch (e) {
           return json(res, 502, { error: "upstream", message: e.message });
