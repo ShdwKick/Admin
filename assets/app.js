@@ -1229,7 +1229,13 @@
       let done = 0, failed = 0, untitledCount = 0;
       for (const photoId of checkedIds) {
         const photo = photos.find(ph => String(ph.id) === photoId);
-        const title = photo.alt || `${firstCategoryName || "Пазл с Pexels"} ${++untitledCount}`;
+        // Alt у Pexels — часто целое описание за 80 символов (лимит
+        // title у Puzzle, см. str() в её server.js): Puzzle не обрезает
+        // длинное название, а целиком ОТБРАСЫВАЕТ его и подставляет свою
+        // болванку "Библиотека" — снаружи выглядело так, будто мой фикс с
+        // "Категория N" не сработал, хотя причина в этом обрезании, не в
+        // пустом alt. Режем здесь же, до отправки.
+        const title = (photo.alt.trim() || `${firstCategoryName || "Пазл с Pexels"} ${++untitledCount}`).slice(0, 80);
         importResultEl.innerHTML = `<div class="bh-empty">Импортирую ${done + failed + 1} из ${checkedIds.length}…</div>`;
         try {
           await api(`/api/services/${encodeURIComponent(id)}/pexels/import`, {
