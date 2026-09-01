@@ -848,6 +848,77 @@
       });
     }
 
+    // Название+категории сохраняются одним вызовом — из строки таблицы и из
+    // модалки (см. openPuzzleEditModal ниже), оба места дёргают эту же
+    // функцию, а не держат по копии Promise.all с теми же двумя эндпоинтами.
+    async function savePuzzle(pid, title, categoryIds) {
+      await Promise.all([
+        api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(pid)}/title`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }),
+        }),
+        api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(pid)}/categories`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ categoryIds }),
+        }),
+      ]);
+    }
+
+    /** Редактирование прямо в модалке «фото целиком» (см. openPhotoModalShell)
+        — название и категории тут же, без похода к строке таблицы. Категории
+        — <select multiple>, не стена чекбоксов, как в строке: когда
+        категорий станет много, чекбоксы будут скроллиться и выбирать станет
+        неудобно, нативный multi-select с фиксированной высотой (size) этого
+        не делает. Строку таблицы при этом не трогаем — она остаётся
+        рабочей и без модалки, просто теперь два независимых способа
+        поправить одно и то же (оба зовут savePuzzle выше). Вариантов
+        сложности тут нет — в форме редактирования это не то, что правят. */
+    function openPuzzleEditModal(p) {
+      const approved = categories.filter(c => c.status === "approved");
+      const selectedIds = new Set(p.categoryIds || []);
+      const backdrop = openPhotoModalShell(p.title, baseUrl + p.imageUrl, `
+        <div class="bh-modal-fields">
+          <label style="display:flex;flex-direction:column;gap:.3rem">
+            <span>Название</span>
+            <input type="text" id="bhEditTitle" value="${escapeHtml(p.title)}">
+          </label>
+          <label style="display:flex;flex-direction:column;gap:.3rem;margin-top:.7rem">
+            <span>Категории${approved.length ? " (Ctrl/Cmd+клик — выбрать несколько)" : ""}</span>
+            ${approved.length
+              ? `<select id="bhEditCategories" multiple size="${Math.min(6, Math.max(3, approved.length))}">
+                  ${approved.map(c => `<option value="${escapeHtml(c.id)}" ${selectedIds.has(c.id) ? "selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}
+                </select>`
+              : `<div class="bh-empty">Нет ни одной категории</div>`}
+          </label>
+          <div class="bh-stat-row" style="margin-top:.5rem"><span>Добавлено</span><b>${escapeHtml(new Date(p.createdAt).toLocaleString("ru-RU"))}</b></div>
+        </div>
+        <div class="bh-toolbar">
+          <button class="bh-btn" id="bhEditSave">Сохранить</button>
+          <button class="bh-btn danger" id="bhEditDelete">Удалить</button>
+        </div>
+      `);
+      backdrop.querySelector("#bhEditSave").onclick = async () => {
+        const titleInput = backdrop.querySelector("#bhEditTitle");
+        const title = titleInput.value.trim();
+        if (!title) { alert("Название не может быть пустым."); titleInput.focus(); return; }
+        const select = backdrop.querySelector("#bhEditCategories");
+        const categoryIds = select ? [...select.selectedOptions].map(o => o.value) : [];
+        const saveBtn = backdrop.querySelector("#bhEditSave");
+        saveBtn.disabled = true;
+        try {
+          await savePuzzle(p.id, title, categoryIds);
+          closePhotoModal();
+          await loadList();
+        } catch (e) { alert("Не получилось: " + e.message); saveBtn.disabled = false; }
+      };
+      backdrop.querySelector("#bhEditDelete").onclick = async () => {
+        if (!confirm(`Удалить «${p.title}» из библиотеки? Если этим пазлом уже играли в какой-то комнате, сервис откажет.`)) return;
+        try {
+          await api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(p.id)}`, { method: "DELETE" });
+          closePhotoModal();
+          await loadList();
+        } catch (e) { alert("Не получилось: " + e.message); }
+      };
+    }
+
     let allPuzzles = []; // полный список с последней загрузки — фильтры ниже работают по нему на месте, без похода на сервер
 
     // Фильтр по названию/категории — на клиенте: библиотека админ-загруженных
@@ -874,17 +945,14 @@
               </td>
             </tr>`).join("")}</tbody>
         </table>`;
-      // Клик по миниатюре — та же модалка «фото целиком», что и в очередях
-      // модерации (см. openPhotoModal выше): 48px мало, чтобы разглядеть,
-      // что за картинка, особенно после массового импорта с Pexels.
+      // Клик по миниатюре — модалка с редактированием прямо там (см.
+      // openPuzzleEditModal выше): 48px в таблице мало, чтобы разглядеть
+      // картинку, особенно после массового импорта с Pexels, а раз уже
+      // открыли — заодно можно поправить название/категории, не закрывая.
       listBox.querySelectorAll("tr[data-id]").forEach(tr => {
         const p = rows.find(r => String(r.id) === tr.dataset.id);
         if (!p) return;
-        tr.querySelector("img").onclick = () => openPhotoModal(p, baseUrl, tr, [
-          ["Категории", (p.categoryIds || []).map(cid => categories.find(c => c.id === cid)).filter(Boolean).map(c => escapeHtml(c.name)).join(", ") || "—"],
-          ["Вариантов сложности", String(p.variants)],
-          ["Добавлено", escapeHtml(new Date(p.createdAt).toLocaleString("ru-RU"))],
-        ]);
+        tr.querySelector("img").onclick = () => openPuzzleEditModal(p);
       });
       listBox.querySelectorAll("button[data-action='delete']").forEach(btn => {
         btn.onclick = async () => {
@@ -914,14 +982,7 @@
           const categoryIds = [...tr.querySelectorAll("input[type=checkbox]:checked")].map(cb => cb.value);
           btn.disabled = true;
           try {
-            await Promise.all([
-              api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(pid)}/title`, {
-                method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }),
-              }),
-              api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(pid)}/categories`, {
-                method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ categoryIds }),
-              }),
-            ]);
+            await savePuzzle(pid, title, categoryIds);
             titleInput.value = title;
           } catch (e) {
             alert("Не получилось: " + e.message);
@@ -1188,33 +1249,46 @@
   }
   function closePhotoModalOnEsc(e) { if (e.key === "Escape") closePhotoModal(); }
 
-  /** Модалка «фото целиком» — общая для обеих очередей ниже (см.
-      wireRoomUploadQueue/wireModerationQueue). Миниатюра 48–64px в таблице
-      мало, чтобы разглядеть запрещённый контент — тут оригинал во весь
-      доступный экран. Кнопки действий в модалке НЕ дублируют логику
-      approve/reject/ban: это тонкое реле, которое жмёт настоящую кнопку той
-      же строки таблицы и закрывает модалку — один источник правды на клик,
-      а не две копии confirm()/api() при этом и в строке, и в модалке. */
-  function openPhotoModal(photo, baseUrl, tr, fields) {
+  /** Общий каркас модалки «фото целиком» — бэкдроп/закрытие/Esc/картинка,
+      содержимое ниже картинки отдаёт вызывающий код целиком строкой HTML.
+      Два разных использования (просмотр+реле на кнопки строки у очередей
+      модерации, редактирование прямо в модалке у библиотеки — см.
+      openPhotoModal и openPuzzleEditModal ниже) слишком разные, чтобы
+      тащить оба в одну сигнатуру с полем «режим». */
+  function openPhotoModalShell(title, imgUrl, bodyHtml) {
     closePhotoModal();
     const backdrop = document.createElement("div");
     backdrop.className = "bh-modal-backdrop";
     backdrop.id = "bhPhotoModal";
     backdrop.innerHTML = `
-      <div class="bh-modal" role="dialog" aria-modal="true" aria-label="${escapeHtml(photo.title)}">
+      <div class="bh-modal" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}">
         <div class="bh-modal-head">
-          <h3>${escapeHtml(photo.title)}</h3>
+          <h3>${escapeHtml(title)}</h3>
           <button class="bh-modal-close" aria-label="Закрыть">×</button>
         </div>
-        <img src="${escapeHtml(baseUrl + photo.imageUrl)}" alt="">
-        <div class="bh-modal-fields">${fields.map(([k, v]) => `<div class="bh-stat-row"><span>${escapeHtml(k)}</span><b>${v}</b></div>`).join("")}</div>
-        <div class="bh-toolbar" id="bhPhotoModalActions"></div>
+        <img src="${escapeHtml(imgUrl)}" alt="">
+        ${bodyHtml}
       </div>
     `;
     backdrop.querySelector(".bh-modal-close").onclick = closePhotoModal;
     backdrop.onclick = e => { if (e.target === backdrop) closePhotoModal(); };
     document.addEventListener("keydown", closePhotoModalOnEsc);
+    document.body.appendChild(backdrop);
+    return backdrop;
+  }
 
+  /** Просмотр фото из очередей модерации (см. wireRoomUploadQueue/
+      wireModerationQueue) — только поля + кнопки-реле, никакого
+      редактирования: approve/reject/ban там завязаны на confirm()/prompt()
+      и статус конкретной заявки, тащить это в модалку как отдельную копию
+      логики не стали. Кнопки НЕ дублируют действия строки — это реле:
+      жмут настоящую кнопку строки и закрывают модалку, один источник
+      правды на клик. */
+  function openPhotoModal(photo, baseUrl, tr, fields) {
+    const backdrop = openPhotoModalShell(photo.title, baseUrl + photo.imageUrl, `
+      <div class="bh-modal-fields">${fields.map(([k, v]) => `<div class="bh-stat-row"><span>${escapeHtml(k)}</span><b>${v}</b></div>`).join("")}</div>
+      <div class="bh-toolbar" id="bhPhotoModalActions"></div>
+    `);
     const actionsEl = backdrop.querySelector("#bhPhotoModalActions");
     tr.querySelectorAll("td.bh-toolbar button").forEach(rowBtn => {
       const relayBtn = document.createElement("button");
@@ -1223,8 +1297,6 @@
       relayBtn.onclick = () => { closePhotoModal(); rowBtn.click(); };
       actionsEl.appendChild(relayBtn);
     });
-
-    document.body.appendChild(backdrop);
   }
 
   /** Очередь ЗАГРУЗКИ В КОМНАТУ — фоновая модерация, отдельная от заявок на
