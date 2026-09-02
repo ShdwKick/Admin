@@ -600,14 +600,14 @@ const server = http.createServer(async (req, res) => {
         const service = SERVICES.find(s => s.id === pexelsImportMatch[1]);
         if (!service) return json(res, 404, { error: "unknown_service" });
         const body = await readJsonBody(req);
-        const { importUrl, width, height, title, categoryIds } = body || {};
+        const { importUrl, width, height, title, categoryId } = body || {};
         if (!importUrl || !title) return json(res, 400, { error: "missing_fields" });
         try {
           const imgRes = await fetch(importUrl, { signal: AbortSignal.timeout(20000) });
           if (!imgRes.ok) return json(res, 502, { error: "pexels", message: `Не удалось скачать фото с Pexels: HTTP ${imgRes.status}` });
           const imageBase64 = Buffer.from(await imgRes.arrayBuffer()).toString("base64");
           const data = await callService(service, "/internal/puzzles", {
-            method: "POST", body: { title, imageBase64, width, height, categoryIds }, timeout: 20000,
+            method: "POST", body: { title, imageBase64, width, height, categoryId }, timeout: 20000,
           });
           logSelf("info", "Admin-действие: импорт картинки с Pexels", { service: service.id, by: admin.username, title });
           return json(res, 200, data);
@@ -659,17 +659,16 @@ const server = http.createServer(async (req, res) => {
           return json(res, 502, { error: "upstream", message: e.message });
         }
       }
-      // Множественное число в пути — категория стала many-to-many (см.
-      // план «Категории many-to-many, автор карточки, профиль»), тело
-      // теперь {categoryIds: [...]}, не одиночный {categoryId}.
-      const puzzleCategoryMatch = p.match(/^\/api\/services\/([\w-]+)\/puzzles\/([\w-]+)\/categories$/);
+      // Единственное число в пути — одна категория на пазл (см. план «Один
+      // пазл — одна категория»), тело {categoryId} (может быть null/пусто).
+      const puzzleCategoryMatch = p.match(/^\/api\/services\/([\w-]+)\/puzzles\/([\w-]+)\/category$/);
       if (puzzleCategoryMatch && method === "POST") {
         const service = SERVICES.find(s => s.id === puzzleCategoryMatch[1]);
         if (!service) return json(res, 404, { error: "unknown_service" });
         const body = await readJsonBody(req);
         try {
-          const data = await callService(service, `/internal/puzzles/${encodeURIComponent(puzzleCategoryMatch[2])}/categories`, { method: "POST", body });
-          logSelf("info", "Admin-действие: изменены категории пазла", { service: service.id, by: admin.username, puzzleId: puzzleCategoryMatch[2], categoryIds: body.categoryIds });
+          const data = await callService(service, `/internal/puzzles/${encodeURIComponent(puzzleCategoryMatch[2])}/category`, { method: "POST", body });
+          logSelf("info", "Admin-действие: изменена категория пазла", { service: service.id, by: admin.username, puzzleId: puzzleCategoryMatch[2], categoryId: body.categoryId });
           return json(res, 200, data);
         } catch (e) {
           return json(res, 502, { error: "upstream", message: e.message });

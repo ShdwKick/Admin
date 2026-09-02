@@ -762,6 +762,7 @@
       <div class="bh-toolbar">
         <input type="text" class="bh-input-narrow" id="categoryCreateName" placeholder="Название категории (люди видят это)">
         <input type="text" class="bh-input-narrow" id="categoryCreateSlug" placeholder="Алиас — необязательно (в пути, напр. cats)" style="width:14em">
+        <input type="text" class="bh-input-narrow" id="categoryCreateNameEn" placeholder="English name — необязательно" style="width:14em">
         <button class="bh-btn" id="categoryCreateBtn">Создать</button>
       </div>
       <div id="categoryListBox"></div>
@@ -787,22 +788,21 @@
     const filterSearchInput = document.getElementById("puzzleFilterSearch");
     const filterCategorySelect = document.getElementById("puzzleFilterCategory");
 
-    // Категория стала many-to-many (см. план «Категории many-to-many,
-    // автор карточки, профиль») — везде, где раньше был одиночный <select>,
-    // теперь группа чекбоксов. Пикеры (форма загрузки, строка таблицы)
-    // предлагают только approved категории — pending/rejected админ видит
-    // только в списке управления ниже, привязывать картинку к ним отсюда
-    // нельзя (approved решается через отдельную модерацию категорий).
+    // Одна категория на пазл (см. план «Один пазл — одна категория») —
+    // везде, где раньше была группа чекбоксов, теперь одиночный <select>.
+    // Пикеры (форма загрузки, строка таблицы) предлагают только approved
+    // категории — pending/rejected админ видит только в списке управления
+    // ниже, привязывать картинку к ним отсюда нельзя (approved решается
+    // через отдельную модерацию категорий).
     let categories = [];
 
-    function categoryCheckboxesHtml(name, selectedIds) {
+    function categorySelectHtml(id, selectedId) {
       const approved = categories.filter(c => c.status === "approved");
       if (!approved.length) return `<div class="bh-empty">Нет ни одной категории</div>`;
-      return approved.map(c => `
-        <label style="display:inline-flex;align-items:center;gap:.3em;margin:0 .8em .3em 0">
-          <input type="checkbox" name="${name}" value="${escapeHtml(c.id)}" ${selectedIds.includes(c.id) ? "checked" : ""}>
-          ${escapeHtml(c.name)}
-        </label>`).join("");
+      return `<select id="${id}">
+        <option value="">— без категории —</option>
+        ${approved.map(c => `<option value="${escapeHtml(c.id)}" ${selectedId === c.id ? "selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}
+      </select>`;
     }
 
     async function loadCategories() {
@@ -814,17 +814,21 @@
         return;
       }
       categories = data.categories || [];
-      uploadCategoriesBox.innerHTML = categoryCheckboxesHtml("puzzleUploadCategory", []);
+      uploadCategoriesBox.innerHTML = categorySelectHtml("puzzleUploadCategory", "");
       // slug — технический алиас (см. план «Алиас и публичное название
       // категории»): люди на странице видят name, slug идёт только в путь
       // (/category/:slug) — тут показываем оба, moderate-серым, чтобы не
       // спорил визуально с самим названием.
+      // nameEn — необязательное английское название (см. план «Английский
+      // язык в интерфейсе»): показываем только если оно реально задано, не
+      // засорять чипы пустой пометкой для большинства категорий.
       categoryListBox.innerHTML = categories.length
         ? categories.map(c => `
             <span class="bh-badge${c.status !== "approved" ? " " + c.status : ""}" data-id="${escapeHtml(c.id)}" style="display:inline-flex;align-items:center;gap:.4em;margin:.2em .3em .2em 0">
               ${escapeHtml(c.name)}${c.status !== "approved" ? ` (${c.status === "pending" ? "на модерации" : "отклонена"})` : ""}
               <span style="font-family:monospace;font-size:.85em;opacity:.7">/${escapeHtml(c.slug || "")}</span>
-              <button class="bh-btn" data-action="edit-category" style="padding:.1em .5em" title="Изменить название/алиас">✎</button>
+              ${c.nameEn ? `<span style="font-size:.85em;opacity:.7">EN: ${escapeHtml(c.nameEn)}</span>` : ""}
+              <button class="bh-btn" data-action="edit-category" style="padding:.1em .5em" title="Изменить название/алиас/English name">✎</button>
               <button class="bh-btn danger" data-action="delete-category" style="padding:.1em .5em">×</button>
             </span>`).join("")
         : `<div class="bh-empty">Пока нет ни одной категории</div>`;
@@ -837,9 +841,12 @@
           if (newName === null) return; // отмена
           const newSlug = prompt("Алиас (технический, идёт в путь /category/…):", cat.slug || "");
           if (newSlug === null) return;
+          const newNameEn = prompt("English name — необязательно (пусто — убрать):", cat.nameEn || "");
+          if (newNameEn === null) return;
           const body = {};
           if (newName.trim() && newName.trim() !== cat.name) body.name = newName.trim();
           if (newSlug.trim() && newSlug.trim() !== cat.slug) body.slug = newSlug.trim();
+          if (newNameEn.trim() !== (cat.nameEn || "")) body.nameEn = newNameEn.trim();
           if (!Object.keys(body).length) return; // ничего не поменяли
           try {
             await api(`/api/services/${encodeURIComponent(id)}/categories/${encodeURIComponent(cid)}`, {
@@ -868,29 +875,24 @@
     // Название+категории сохраняются одним вызовом — из строки таблицы и из
     // модалки (см. openPuzzleEditModal ниже), оба места дёргают эту же
     // функцию, а не держат по копии Promise.all с теми же двумя эндпоинтами.
-    async function savePuzzle(pid, title, categoryIds) {
+    async function savePuzzle(pid, title, categoryId) {
       await Promise.all([
         api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(pid)}/title`, {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }),
         }),
-        api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(pid)}/categories`, {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ categoryIds }),
+        api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(pid)}/category`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ categoryId }),
         }),
       ]);
     }
 
     /** Редактирование прямо в модалке «фото целиком» (см. openPhotoModalShell)
-        — название и категории тут же, без похода к строке таблицы. Категории
-        — <select multiple>, не стена чекбоксов, как в строке: когда
-        категорий станет много, чекбоксы будут скроллиться и выбирать станет
-        неудобно, нативный multi-select с фиксированной высотой (size) этого
-        не делает. Строку таблицы при этом не трогаем — она остаётся
-        рабочей и без модалки, просто теперь два независимых способа
-        поправить одно и то же (оба зовут savePuzzle выше). Вариантов
-        сложности тут нет — в форме редактирования это не то, что правят. */
+        — название и категория тут же, без похода к строке таблицы. Строку
+        таблицы при этом не трогаем — она остаётся рабочей и без модалки,
+        просто теперь два независимых способа поправить одно и то же (оба
+        зовут savePuzzle выше). Вариантов сложности тут нет — в форме
+        редактирования это не то, что правят. */
     function openPuzzleEditModal(p) {
-      const approved = categories.filter(c => c.status === "approved");
-      const selectedIds = new Set(p.categoryIds || []);
       const backdrop = openPhotoModalShell(p.title, baseUrl + p.imageUrl, `
         <div class="bh-modal-fields">
           <label style="display:flex;flex-direction:column;gap:.3rem">
@@ -898,12 +900,8 @@
             <input type="text" id="bhEditTitle" value="${escapeHtml(p.title)}">
           </label>
           <label style="display:flex;flex-direction:column;gap:.3rem;margin-top:.7rem">
-            <span>Категории${approved.length ? " (Ctrl/Cmd+клик — выбрать несколько)" : ""}</span>
-            ${approved.length
-              ? `<select id="bhEditCategories" multiple size="${Math.min(6, Math.max(3, approved.length))}">
-                  ${approved.map(c => `<option value="${escapeHtml(c.id)}" ${selectedIds.has(c.id) ? "selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}
-                </select>`
-              : `<div class="bh-empty">Нет ни одной категории</div>`}
+            <span>Категория</span>
+            ${categorySelectHtml("bhEditCategory", p.categoryId || "")}
           </label>
           <div class="bh-stat-row" style="margin-top:.5rem"><span>Добавлено</span><b>${escapeHtml(new Date(p.createdAt).toLocaleString("ru-RU"))}</b></div>
         </div>
@@ -916,12 +914,12 @@
         const titleInput = backdrop.querySelector("#bhEditTitle");
         const title = titleInput.value.trim();
         if (!title) { alert("Название не может быть пустым."); titleInput.focus(); return; }
-        const select = backdrop.querySelector("#bhEditCategories");
-        const categoryIds = select ? [...select.selectedOptions].map(o => o.value) : [];
+        const select = backdrop.querySelector("#bhEditCategory");
+        const categoryId = select ? select.value : "";
         const saveBtn = backdrop.querySelector("#bhEditSave");
         saveBtn.disabled = true;
         try {
-          await savePuzzle(p.id, title, categoryIds);
+          await savePuzzle(p.id, title, categoryId);
           closePhotoModal();
           await loadList();
         } catch (e) { alert("Не получилось: " + e.message); saveBtn.disabled = false; }
@@ -946,13 +944,13 @@
       if (!rows.length) { listBox.innerHTML = `<div class="bh-empty">${allPuzzles.length ? "Ничего не подходит под фильтр" : "Пока ничего не добавлено"}</div>`; return; }
       listBox.innerHTML = `
         <table class="bh-table">
-          <thead><tr><th></th><th>Название</th><th>Категории</th><th>Вариантов</th><th>Добавлено</th><th></th></tr></thead>
+          <thead><tr><th></th><th>Название</th><th>Категория</th><th>Вариантов</th><th>Добавлено</th><th></th></tr></thead>
           <tbody>${rows.map(p => `
             <tr data-id="${escapeHtml(p.id)}">
               <td><img class="bh-modal-thumb" src="${escapeHtml(baseUrl + p.imageUrl)}" alt="" style="width:48px;height:36px;object-fit:cover;border-radius:4px;display:block"></td>
               <td><input type="text" class="bh-input-narrow" data-role="title" value="${escapeHtml(p.title)}" style="width:11em"></td>
               <td>
-                <div data-role="categories">${categoryCheckboxesHtml("rowCategory-" + escapeHtml(p.id), p.categoryIds || [])}</div>
+                <div data-role="category">${categorySelectHtml("rowCategory-" + escapeHtml(p.id), p.categoryId || "")}</div>
               </td>
               <td>${p.variants}</td>
               <td>${new Date(p.createdAt).toLocaleDateString("ru-RU")}</td>
@@ -996,10 +994,11 @@
           const titleInput = tr.querySelector('[data-role="title"]');
           const title = titleInput.value.trim();
           if (!title) { alert("Название не может быть пустым."); titleInput.focus(); return; }
-          const categoryIds = [...tr.querySelectorAll("input[type=checkbox]:checked")].map(cb => cb.value);
+          const categorySelect = tr.querySelector('[data-role="category"] select');
+          const categoryId = categorySelect ? categorySelect.value : "";
           btn.disabled = true;
           try {
-            await savePuzzle(pid, title, categoryIds);
+            await savePuzzle(pid, title, categoryId);
             titleInput.value = title;
           } catch (e) {
             alert("Не получилось: " + e.message);
@@ -1014,7 +1013,7 @@
       const categoryId = filterCategorySelect.value;
       const filtered = allPuzzles.filter(p =>
         (!query || p.title.toLowerCase().includes(query)) &&
-        (!categoryId || (p.categoryIds || []).includes(categoryId))
+        (!categoryId || p.categoryId === categoryId)
       );
       renderList(filtered);
     }
@@ -1062,17 +1061,25 @@
     document.getElementById("categoryCreateBtn").onclick = async () => {
       const input = document.getElementById("categoryCreateName");
       const slugInput = document.getElementById("categoryCreateSlug");
+      const nameEnInput = document.getElementById("categoryCreateNameEn");
       const name = input.value.trim();
       const slug = slugInput.value.trim();
+      const nameEn = nameEnInput.value.trim();
       if (!name) { alert("Укажите название категории."); return; }
       try {
-        // slug — необязательное поле (см. план «Алиас и публичное название
-        // категории»): не заполнили — сервер сам выведет его из name.
+        // slug/nameEn — необязательные поля (см. план «Алиас и публичное
+        // название категории», «Английский язык в интерфейсе»): не
+        // заполнили — сервер сам выведет slug из name, nameEn просто
+        // остаётся пустым (клиент тогда показывает name всегда).
+        const body = { name };
+        if (slug) body.slug = slug;
+        if (nameEn) body.nameEn = nameEn;
         await api(`/api/services/${encodeURIComponent(id)}/categories`, {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(slug ? { name, slug } : { name }),
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
         });
         input.value = "";
         slugInput.value = "";
+        nameEnInput.value = "";
         await loadCategories();
         await loadList(); // подтягивает новую категорию и в фильтр, и в чекбоксы строк
       } catch (e) { alert("Не получилось: " + e.message); }
@@ -1080,7 +1087,8 @@
 
     document.getElementById("puzzleUploadBtn").onclick = async () => {
       const title = document.getElementById("puzzleUploadTitle").value.trim();
-      const categoryIds = [...uploadCategoriesBox.querySelectorAll("input[type=checkbox]:checked")].map(cb => cb.value);
+      const uploadCategorySelect = uploadCategoriesBox.querySelector("select");
+      const categoryId = uploadCategorySelect ? uploadCategorySelect.value : "";
       const fileInput = document.getElementById("puzzleUploadFile");
       const file = fileInput.files[0];
       if (!title) { alert("Укажите название."); return; }
@@ -1090,7 +1098,7 @@
         const { base64, width, height } = await readImageAsBase64(file);
         const data = await api(`/api/services/${encodeURIComponent(id)}/puzzles`, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title, imageBase64: base64, width, height, categoryIds }),
+          body: JSON.stringify({ title, imageBase64: base64, width, height, categoryId }),
         });
         resultEl.innerHTML = `<div class="bh-card"><div class="bh-stat-row"><span>${escapeHtml(data.title)}</span><b>${data.variants.length} вариантов сложности</b></div></div>`;
         document.getElementById("puzzleUploadTitle").value = "";
@@ -1151,11 +1159,10 @@
       categories = data.categories || [];
       const approved = (data.categories || []).filter(c => c.status === "approved");
       categoriesBox.innerHTML = approved.length
-        ? approved.map(c => `
-            <label style="display:inline-flex;align-items:center;gap:.3em;margin:0 .8em .3em 0">
-              <input type="checkbox" name="pexelsCategory" value="${escapeHtml(c.id)}">
-              ${escapeHtml(c.name)}
-            </label>`).join("")
+        ? `<select id="pexelsCategory">
+            <option value="">— без категории —</option>
+            ${approved.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join("")}
+          </select>`
         : `<div class="bh-empty">Нет ни одной категории — создайте на вкладке «Библиотека»</div>`;
     }
 
@@ -1216,14 +1223,15 @@
     importBtn.onclick = async () => {
       const checkedIds = [...resultsEl.querySelectorAll("input:checked")].map(cb => cb.value);
       if (!checkedIds.length) return;
-      const categoryIds = [...categoriesBox.querySelectorAll("input:checked")].map(cb => cb.value);
-      // Болванка для фото без alt-текста у Pexels — название первой выбранной
+      const categorySelect = categoriesBox.querySelector("select");
+      const categoryId = categorySelect ? categorySelect.value : "";
+      // Болванка для фото без alt-текста у Pexels — название выбранной
       // категории (человекочитаемое name, не технический slug — см. план
       // «Алиас и публичное название категории») плюс порядковый номер внутри
       // этого импорта, вместо голого "Библиотека"/общей заглушки: хоть
       // как-то понятно, что это, ещё до того как кто-то откроет и переименует.
-      const firstCategoryName = categoryIds.length
-        ? (categories.find(c => c.id === categoryIds[0]) || {}).name
+      const selectedCategoryName = categoryId
+        ? (categories.find(c => c.id === categoryId) || {}).name
         : null;
       importBtn.disabled = true;
       let done = 0, failed = 0, untitledCount = 0;
@@ -1235,14 +1243,14 @@
         // болванку "Библиотека" — снаружи выглядело так, будто мой фикс с
         // "Категория N" не сработал, хотя причина в этом обрезании, не в
         // пустом alt. Режем здесь же, до отправки.
-        const title = (photo.alt.trim() || `${firstCategoryName || "Пазл с Pexels"} ${++untitledCount}`).slice(0, 80);
+        const title = (photo.alt.trim() || `${selectedCategoryName || "Пазл с Pexels"} ${++untitledCount}`).slice(0, 80);
         importResultEl.innerHTML = `<div class="bh-empty">Импортирую ${done + failed + 1} из ${checkedIds.length}…</div>`;
         try {
           await api(`/api/services/${encodeURIComponent(id)}/pexels/import`, {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               importUrl: photo.importUrl, width: photo.width, height: photo.height,
-              title, categoryIds,
+              title, categoryId,
             }),
           });
           done++;
