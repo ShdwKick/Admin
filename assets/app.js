@@ -778,13 +778,17 @@
       <div class="bh-toolbar">
         <input type="text" class="bh-input-narrow" id="puzzleFilterSearch" placeholder="Поиск по названию" style="width:12em">
         <select id="puzzleFilterCategory"><option value="">Все категории</option></select>
+        <button class="bh-btn" id="puzzleBulkSaveBtn" disabled>Сохранить изменения (0)</button>
       </div>
+      <div id="puzzleBulkSaveResult"></div>
       <div id="puzzleListBox"><div class="bh-empty">Загрузка…</div></div>
     `;
     const resultEl = document.getElementById("puzzleUploadResult");
     const listBox = document.getElementById("puzzleListBox");
     const categoryListBox = document.getElementById("categoryListBox");
     const uploadCategoriesBox = document.getElementById("puzzleUploadCategories");
+    const bulkSaveBtn = document.getElementById("puzzleBulkSaveBtn");
+    const bulkSaveResultEl = document.getElementById("puzzleBulkSaveResult");
     const filterSearchInput = document.getElementById("puzzleFilterSearch");
     const filterCategorySelect = document.getElementById("puzzleFilterCategory");
 
@@ -969,6 +973,14 @@
         if (!p) return;
         tr.querySelector("img").onclick = () => openPuzzleEditModal(p);
       });
+      // Живой счётчик несохранённых правок для «Сохранить изменения» ниже —
+      // на каждый ввод/смену категории, а не только на blur, чтобы кнопка
+      // не выглядела мёртвой, пока правишь сразу несколько строк подряд.
+      listBox.querySelectorAll('[data-role="title"], [data-role="category"] select').forEach(input => {
+        input.addEventListener("input", updateBulkSaveButton);
+        input.addEventListener("change", updateBulkSaveButton);
+      });
+      updateBulkSaveButton();
       listBox.querySelectorAll("button[data-action='delete']").forEach(btn => {
         btn.onclick = async () => {
           const tr = btn.closest("tr");
@@ -1000,6 +1012,9 @@
           try {
             await savePuzzle(pid, title, categoryId);
             titleInput.value = title;
+            const p = allPuzzles.find(x => String(x.id) === pid);
+            if (p) { p.title = title; p.categoryId = categoryId || null; }
+            updateBulkSaveButton();
           } catch (e) {
             alert("Не получилось: " + e.message);
           }
@@ -1007,6 +1022,60 @@
         };
       });
     }
+
+    /** Строки, у которых название/категория в DOM разошлись с тем, что
+        реально загружено (allPuzzles) — источник правды для счётчика и для
+        самого массового сохранения ниже. Пустое название в списке изменений
+        не оказывается: пустая строка не проходит валидацию title у Puzzle
+        всё равно, отфильтровываем тут же, а не только на клике «Сохранить
+        изменения». */
+    function getDirtyRows() {
+      const out = [];
+      listBox.querySelectorAll("tr[data-id]").forEach(tr => {
+        const pid = tr.dataset.id;
+        const p = allPuzzles.find(x => String(x.id) === pid);
+        if (!p) return;
+        const title = tr.querySelector('[data-role="title"]').value.trim();
+        const categorySelect = tr.querySelector('[data-role="category"] select');
+        const categoryId = categorySelect ? categorySelect.value : "";
+        const changed = title !== p.title || categoryId !== (p.categoryId || "");
+        if (changed && title) out.push({ pid, title, categoryId, tr });
+      });
+      return out;
+    }
+
+    function updateBulkSaveButton() {
+      const n = getDirtyRows().length;
+      bulkSaveBtn.disabled = n === 0;
+      bulkSaveBtn.textContent = `Сохранить изменения (${n})`;
+    }
+
+    // Одной кнопкой — все правки по всем видимым строкам разом, вместо
+    // «Сохранить» на каждой отдельно, когда меняешь категории массово после
+    // импорта. Последовательно, не Promise.all — тот же приём, что у
+    // импорта с Pexels: видно прогресс и не бьём по Puzzle пачкой запросов
+    // разом на сотню строк.
+    bulkSaveBtn.onclick = async () => {
+      const dirty = getDirtyRows();
+      if (!dirty.length) return;
+      bulkSaveBtn.disabled = true;
+      let done = 0, failed = 0;
+      for (const row of dirty) {
+        bulkSaveResultEl.innerHTML = `<div class="bh-empty">Сохраняю ${done + failed + 1} из ${dirty.length}…</div>`;
+        try {
+          await savePuzzle(row.pid, row.title, row.categoryId);
+          const p = allPuzzles.find(x => String(x.id) === row.pid);
+          if (p) { p.title = row.title; p.categoryId = row.categoryId || null; }
+          done++;
+        } catch (e) { failed++; }
+      }
+      bulkSaveResultEl.innerHTML = `
+        <div class="bh-card">
+          <div class="bh-stat-row"><span>Сохранено</span><b>${done}</b></div>
+          ${failed ? `<div class="bh-stat-row"><span>Ошибок</span><b>${failed}</b></div>` : ""}
+        </div>`;
+      updateBulkSaveButton();
+    };
 
     function applyFilter() {
       const query = filterSearchInput.value.trim().toLowerCase();
