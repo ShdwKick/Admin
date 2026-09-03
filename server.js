@@ -3,11 +3,17 @@
  * Админка — одно место, где смотреть аналитику и логи остальных сервисов
  * BurningHouse и управлять ролью админа.
  *
- * Чистый Node.js, без внешних зависимостей. Своих данных не хранит вовсе —
- * никакой базы и volume не заводит: при каждом обращении дёргает /internal/*
- * у настроенных сервисов и отдаёт фронту. Входит через общий auth так же, как
- * остальные сервисы (SSO), но пускает внутрь, только если в токене есть claim
- * admin — его проставляет Auth пользователю через `node server.js make-admin`.
+ * Чистый Node.js, без внешних зависимостей (SQLite — встроенный node:sqlite,
+ * как и у остальных сервисов, отдельного пакета не требует). Текущие цифры
+ * при каждом обращении дёргает /internal/* у настроенных сервисов и отдаёт
+ * фронту, не храня — но с правки «Метрики» ещё и складывает эти же снимки
+ * раз в час в свою маленькую SQLite (см. metrics.db, DB_PATH ниже), чтобы
+ * рисовать графики по времени, а не только «сейчас». Это первая настоящая
+ * база у Admin — раньше на диске лежал только health-state.json (см. ниже),
+ * теперь рядом, в том же DATA_DIR/volume. Входит через общий auth так же,
+ * как остальные сервисы (SSO), но пускает внутрь, только если в токене есть
+ * claim admin — его проставляет Auth пользователю через `node server.js
+ * make-admin`.
  *
  * Вызовы к другим сервисам (/internal/stats, /internal/logs, /internal/users…)
  * — это НЕ тот SSO-токен браузера, а отдельный server-to-server секрет
@@ -41,14 +47,17 @@
  * HEALTH_CHECK_INTERVAL_MS дёргает /internal/stats у каждого сервиса из
  * SERVICES_JSON (та же проверка, что у /api/overview) и, если хоть один не
  * ответил, шлёт письмо всем админам (см. Auth /internal/users, поле admin).
- * Пока все живы — писем нет вовсе. Это ЕДИНСТВЕННОЕ состояние, которое Admin
- * хранит на диске (см. DATA_DIR) — весь остальной сервис как был, так и
- * остался без своей базы.
+ * Пока все живы — писем нет вовсе. Тот же самый вызов заодно кормит метрики
+ * (см. ниже) — снимок стата уже в руках, лишний HTTP-запрос к сервису ради
+ * истории не нужен.
  *
- *   DATA_DIR         (по умолчанию ./data) — health-state.json: флаг
- *     «проблема известна, чинится» и последний результат проверки. Только
- *     это и переживает рестарт/редеплой — остальным Admin по-прежнему не
- *     обзаводится.
+ *   DATA_DIR         (по умолчанию ./data) — health-state.json (флаг
+ *     «проблема известна, чинится» и последний результат проверки) и
+ *     metrics.db (см. план «Метрики» — история /internal/stats по времени,
+ *     раз в час, retention METRICS_RETENTION_DAYS). Всё, что переживает
+ *     рестарт/редеплой — остального Admin по-прежнему не хранит.
+ *   METRICS_RETENTION_DAYS (по умолчанию 180) — старше этого снимки метрик
+ *     удаляются при каждой записи новых (см. runHealthCheck).
  *   HEALTH_CHECK_INTERVAL_MS (по умолчанию 3600000 = 1 час)
  *   RESEND_API_KEY, MAIL_FROM — см. mailer.js. Без RESEND_API_KEY письма
  *     просто логируются, health-check при этом всё равно считается и
@@ -61,6 +70,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const { DatabaseSync } = require("node:sqlite");
 
 const PORT = parseInt(process.env.PORT || "8793", 10);
 const HOST = process.env.HOST || "127.0.0.1";
@@ -77,9 +87,50 @@ if (!PEXELS_API_KEY) console.warn("PEXELS_API_KEY не задан — вклад
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const HEALTH_STATE_PATH = path.join(DATA_DIR, "health-state.json");
 const HEALTH_CHECK_INTERVAL_MS = parseInt(process.env.HEALTH_CHECK_INTERVAL_MS || String(60 * 60 * 1000), 10);
+const METRICS_RETENTION_DAYS = parseInt(process.env.METRICS_RETENTION_DAYS || "180", 10);
 const PUBLIC_URL = (process.env.PUBLIC_URL || "").replace(/\/+$/, "");
 const mailer = require("./mailer");
 fs.mkdirSync(DATA_DIR, { recursive: true });
+
+// ---------- метрики: история /internal/stats по времени ----------
+// Первая настоящая база у Admin (см. заголовок файла) — один снимок в час
+// на сервис, тем же вызовом, что уже делает health-check (см. runHealthCheck).
+// stats_json — весь ответ /internal/stats целиком, не разложен по колонкам:
+// набор полей у каждого сервиса свой и меняется (см. Puzzle/Auth/Movies/
+// Trip/Финансы — у каждого разные ключи), разбирать их тут заранее незачем —
+// JSON и фильтрация "что число, что нет" на фронте (см. app.js, тот же
+// приём, что уже есть у statsAndChartHtml) дешевле, чем ALTER TABLE при
+// каждой новой цифре в каком-то сервисе.
+const db = new DatabaseSync(path.join(DATA_DIR, "metrics.db"));
+db.exec(`
+  CREATE TABLE IF NOT EXISTS metrics_snapshots (
+    id          INTEGER PRIMARY KEY,
+    service_id  TEXT NOT NULL,
+    ts          INTEGER NOT NULL,
+    stats_json  TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_metrics_service_ts ON metrics_snapshots(service_id, ts);
+`);
+// Каждый вызов готовит свой db.prepare() заново, а не кэширует стейтмент на
+// весь процесс (в отличие от остальных сервисов семьи, см. Puzzle/server.js
+// stmt.*) — так надёжнее именно для этой таблицы: снимок пишется раз в час,
+// первое обращение приходит спустя добрый десяток секунд после старта
+// процесса, а стейтмент, подготовленный при старте модуля и ни разу не
+// использованный до этого момента, в связке с --experimental-sqlite на
+// практике зависал намертво на .run() безо всякой ошибки при первом же
+// обращении после такой паузы (воспроизведено вживую при отладке этой
+// правки — см. README.md, раздел «Метрики»). Раз в час —
+// не тот случай, где стоит держать стейтмент прогретым ради микросекунд
+// экономии, а вот зависшая история метрик — уже реальная цена.
+function insertMetricsSnapshot(serviceId, ts, statsJson) {
+  db.prepare("INSERT INTO metrics_snapshots (service_id, ts, stats_json) VALUES (?, ?, ?)").run(serviceId, ts, statsJson);
+}
+function metricsSnapshotsSince(serviceId, since) {
+  return db.prepare("SELECT ts, stats_json FROM metrics_snapshots WHERE service_id = ? AND ts >= ? ORDER BY ts").all(serviceId, since);
+}
+function pruneOldMetrics(before) {
+  db.prepare("DELETE FROM metrics_snapshots WHERE ts < ?").run(before);
+}
 
 if (!AUTH_ISSUER) {
   console.error("Не задан AUTH_ISSUER — без него нечем проверять токены. Укажите адрес auth-сервиса, напр. AUTH_ISSUER=https://auth.burninghouse.ru");
@@ -154,6 +205,29 @@ async function callService(service, urlPath, { method = "GET", body, timeout = 5
     throw new Error(`${service.id}: HTTP ${res.status}${detail}`);
   }
   return data;
+}
+
+/**
+ * Системные уведомления Auth (см. план «Системные уведомления Auth →
+ * Puzzle») — сервис-агностичный релей: если ответ approve/reject модерации
+ * несёт {uploaderUserId, notify:{type,title,body?,url?}}, пересылаем это в
+ * Auth по тому же X-Admin-Key (у Admin есть он, токена автора фото — нет и
+ * быть не может). Работает для ЛЮБОГО сервиса, принявшего этот же контракт
+ * ответа на своих модерационных роутах, не только для Puzzle — ничего
+ * специфичного про конкретный сервис тут не знаем и не должны.
+ * Намеренно не бросает исключение — сбой уведомления не должен откатывать
+ * или показывать ошибкой уже подтверждённое модерационное действие.
+ */
+async function relayModerationNotification(service, data) {
+  if (!AUTH_SERVICE || !data || !data.uploaderUserId || !data.notify) return;
+  try {
+    await callService(AUTH_SERVICE, "/internal/notifications", {
+      method: "POST",
+      body: { userId: data.uploaderUserId, source: service.id, ...data.notify },
+    });
+  } catch (e) {
+    logSelf("warn", "Не удалось создать уведомление", { service: service.id, message: e.message });
+  }
 }
 
 /** Общее для /api/overview (все сервисы разом) и /api/services/:id/stats (один). */
@@ -284,7 +358,18 @@ async function sendHealthAlert(down) {
 async function runHealthCheck() {
   const results = await Promise.all(SERVICES.map(fetchServiceStats));
   const down = results.filter(r => !r.ok);
-  healthState.lastCheckAt = Date.now();
+  const ts = Date.now();
+
+  // Метрики (см. план «Метрики») — тот же results, что уже дёрнут для
+  // health-check, второй сетевой поход к сервисам не нужен. Недоступный
+  // сервис просто не оставляет снимка за этот час (r.ok === false) — дыра в
+  // графике честнее, чем протащить в историю выдуманный ноль.
+  for (const r of results) {
+    if (r.ok) insertMetricsSnapshot(r.id, ts, JSON.stringify(r.stats));
+  }
+  pruneOldMetrics(ts - METRICS_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+
+  healthState.lastCheckAt = ts;
   healthState.lastResults = results.map(r => ({ id: r.id, name: r.name, ok: r.ok, error: r.error || null }));
   saveHealthState();
   if (!down.length) return;
@@ -300,8 +385,8 @@ async function runHealthCheck() {
 // дальше — раз в HEALTH_CHECK_INTERVAL_MS. setInterval, не рекурсивный
 // setTimeout: карта дежурства не должна дрейфовать от времени самого
 // запроса — раз в час значит раз в час, а не «час после конца предыдущего».
-setTimeout(() => { runHealthCheck().catch(e => logSelf("error", "Health-check упал", { message: e.message })); }, 15000);
-setInterval(() => { runHealthCheck().catch(e => logSelf("error", "Health-check упал", { message: e.message })); }, HEALTH_CHECK_INTERVAL_MS);
+setTimeout(() => { runHealthCheck().catch(e => logSelf("error", "Health-check упал", { message: e.message, stack: e.stack })); }, 15000);
+setInterval(() => { runHealthCheck().catch(e => logSelf("error", "Health-check упал", { message: e.message, stack: e.stack })); }, HEALTH_CHECK_INTERVAL_MS);
 
 // ---------- сервер ----------
 
@@ -366,6 +451,28 @@ const server = http.createServer(async (req, res) => {
         const service = SERVICES.find(s => s.id === statsMatch[1]);
         if (!service) return json(res, 404, { error: "unknown_service" });
         return json(res, 200, await fetchServiceStats(service));
+      }
+
+      // История /internal/stats по времени (см. план «Метрики») — из своей
+      // metrics.db, без похода к самим сервисам: копится раз в час в
+      // runHealthCheck. Тот же {services:[{id,name,…}]} формат массива, что
+      // и /api/overview — фронт уже умеет такой перебирать. points — ts +
+      // весь снимок stats_json, включая нечисловые поля (см.
+      // metricsSnapshotsSince) — фронт сам решает, что рисовать графиком, а
+      // что просто значением (тот же приём, что statsAndChartHtml уже
+      // делает для "сейчас").
+      if (p === "/api/metrics" && method === "GET") {
+        const days = Math.min(365, Math.max(1, parseInt(url.searchParams.get("days") || "30", 10) || 30));
+        const since = Date.now() - days * 24 * 60 * 60 * 1000;
+        const services = SERVICES.map(s => ({
+          id: s.id, name: s.name,
+          points: metricsSnapshotsSince(s.id, since).map(row => {
+            let stats = {};
+            try { stats = JSON.parse(row.stats_json); } catch { /* повреждённая строка — пропускаем как пустой снимок */ }
+            return { ts: row.ts, ...stats };
+          }),
+        }));
+        return json(res, 200, { days, services });
       }
 
       const logsMatch = p.match(/^\/api\/services\/([\w-]+)\/logs$/);
@@ -707,6 +814,7 @@ const server = http.createServer(async (req, res) => {
         try {
           const data = await callService(service, `/internal/moderation/photos/${encodeURIComponent(modApproveMatch[2])}/approve`, { method: "POST" });
           logSelf("info", "Admin-действие: одобрена публикация фото", { service: service.id, by: admin.username, photoId: modApproveMatch[2] });
+          await relayModerationNotification(service, data);
           return json(res, 200, data);
         } catch (e) {
           return json(res, 502, { error: "upstream", message: e.message });
@@ -720,6 +828,7 @@ const server = http.createServer(async (req, res) => {
         try {
           const data = await callService(service, `/internal/moderation/photos/${encodeURIComponent(modRejectMatch[2])}/reject`, { method: "POST", body });
           logSelf("info", "Admin-действие: отклонена публикация фото", { service: service.id, by: admin.username, photoId: modRejectMatch[2], reason: body.reason });
+          await relayModerationNotification(service, data);
           return json(res, 200, data);
         } catch (e) {
           return json(res, 502, { error: "upstream", message: e.message });

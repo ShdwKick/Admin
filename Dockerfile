@@ -3,10 +3,12 @@ FROM node:24-alpine
 WORKDIR /app
 
 # Копируем только то, что реально нужно в рантайме. Зависимостей нет вовсе —
-# как и у остальных сервисов BurningHouse. Своей базы Admin по-прежнему не
-# ведёт — только health-state.json на смонтированном /app/data (см. server.js
-# runHealthCheck, docker-compose volumes), сама аналитика/логи всё так же
-# дёргаются из /internal/* остальных сервисов на лету, не хранятся.
+# как и у остальных сервисов BurningHouse (SQLite — встроенный node:sqlite).
+# На смонтированном /app/data (см. docker-compose volumes) теперь два файла:
+# health-state.json (как раньше) и metrics.db (см. план «Метрики», server.js
+# runHealthCheck) — история /internal/stats по времени, раз в час. Текущие
+# цифры «сейчас» (Обзор/детали сервиса) по-прежнему не хранятся — дёргаются
+# из /internal/* остальных сервисов на лету.
 COPY *.js ./
 COPY index.html ./
 COPY assets/ ./assets/

@@ -133,6 +133,26 @@ a.bh-card:hover{ border-color:color-mix(in srgb, var(--flame-tip) 45%, var(--car
 .bh-chart-row .bar-fill{ height:100%; background:linear-gradient(90deg, var(--flame-base), var(--flame-tip)); border-radius:.3rem; }
 .bh-chart-row .value{ text-align:right; color:var(--ink); font-weight:600; }
 
+/* Вкладка «Метрики» (см. renderMetrics в app.js) — сетка мелких карточек
+   со спарклайном на каждое числовое поле /internal/stats, одна секция на
+   сервис. Карточка — та же база, что .bh-card, просто компактнее (там
+   бывает сразу десяток на сервис, полноразмерный .bh-card был бы избыточен). */
+.bh-spark-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(12.5rem,1fr)); gap:.8rem; margin-bottom:.5rem; }
+.bh-spark-card{
+  background:var(--card-bg); border:1px solid var(--card-border); border-radius:.7rem;
+  padding:.8rem .9rem;
+}
+.bh-spark-card .label{ font-size:.78rem; color:var(--ink-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* Не .bh-spark — тот класс уже занят декоративными частицами-угольками
+   бренда (см. assets/brand.css/.js, .bh-layer.bh-sparks), совпадение имён
+   ломало вид графика: браузер применял анимационные стили угольков вместо
+   моих. */
+.bh-metric-spark{ display:block; width:100%; height:3rem; margin:.4rem 0; }
+.bh-spark-card .value{ font-size:1.05rem; font-weight:650; }
+.bh-spark-card .hint{ font-size:.76rem; color:var(--ink-dim); margin-top:.3rem; }
+.bh-spark-foot{ display:flex; align-items:baseline; justify-content:space-between; gap:.5rem; }
+.bh-spark-foot .trend{ font-size:.78rem; color:var(--ink-dim); white-space:nowrap; }
+
 .bh-toolbar{ display:flex; flex-wrap:wrap; gap:.6rem; align-items:center; margin-bottom:1rem; }
 select, input[type="text"], input[type="number"]{
   background:var(--card-bg); color:var(--ink); border:1px solid var(--card-border);
@@ -148,6 +168,9 @@ button.bh-btn{
 button.bh-btn:hover{ background:color-mix(in srgb, var(--flame-tip) 26%, transparent); }
 button.bh-btn.danger{ color:var(--danger); }
 button.bh-btn:disabled{ opacity:.5; cursor:default; }
+/* Выбранный диапазон на вкладке «Метрики» (см. renderMetrics в app.js) —
+   тот же приём выделения, что .bh-tab.is-active, просто на кнопке-таблетке. */
+button.bh-btn.is-active{ background:var(--flame-base); color:#fff; border-color:var(--flame-base); }
 
 table.bh-table{ width:100%; border-collapse:collapse; font-size:.88rem; }
 table.bh-table th{ text-align:left; color:var(--ink-dim); font-weight:500; padding:.5rem .6rem; border-bottom:1px solid var(--card-border); }

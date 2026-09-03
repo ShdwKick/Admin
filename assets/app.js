@@ -121,6 +121,10 @@
   // Таймер автообновления логов (см. wireLogs) — так же один на всё
   // приложение и чистится в render() при уходе со страницы сервиса.
   let logTimer = null;
+  // Выбранный диапазон вкладки «Метрики» (см. renderMetrics) — переживает
+  // только текущую сессию вкладки в браузере, не localStorage: это не
+  // настройка, а сиюминутный выбор «сейчас смотрю за 7/30/90 дней».
+  let metricsDays = 30;
   // Список подвкладок страницы сервиса (см. renderServiceDetail) — тоже
   // нужен ДО renderShell(): на него ссылается currentRoute(), которую
   // render() вызывает синхронно при первом заходе, ещё до объявления
@@ -141,6 +145,7 @@
       return { view: "service", id, tab: DETAIL_TABS.includes(tab) ? tab : "rooms" };
     }
     if (h === "users") return { view: "users" };
+    if (h === "metrics") return { view: "metrics" };
     return { view: "overview" };
   }
 
@@ -148,6 +153,7 @@
     app.innerHTML = `
       <div class="bh-tabs">
         <button class="bh-tab" data-tab="overview">Обзор</button>
+        <button class="bh-tab" data-tab="metrics">Метрики</button>
         <button class="bh-tab" data-tab="users">Пользователи</button>
       </div>
       <div id="tabBody"></div>
@@ -168,6 +174,7 @@
       try {
         if (route.view === "service") return await renderServiceDetail(body, route.id, route.tab);
         if (route.view === "users") return await renderUsers(body);
+        if (route.view === "metrics") return await renderMetrics(body);
         return await renderOverview(body);
       } catch (e) {
         if (e instanceof ForbiddenError) return showForbiddenGate();
@@ -271,6 +278,117 @@
       <h3><span class="bh-dot ok"></span>${escapeHtml(s.name)}</h3>
       ${rows || '<div class="bh-stat-row"><span>—</span></div>'}${more}
     </a>`;
+  }
+
+  /* ---------- Метрики: история /internal/stats по времени ----------
+   * см. план «Метрики» — решили начать с простого дашборда прямо тут, а не
+   * с Grafana: данных пока немного, а Admin и так уже дёргает /internal/stats
+   * у каждого сервиса (см. cardHtml/statsAndChartHtml) — тут те же самые
+   * числа, только с историей (Admin/server.js копит их раз в час в свою
+   * metrics.db, см. runHealthCheck). Один спарклайн-график на каждое
+   * числовое поле последнего снимка — сервисы это простые счётчики
+   * (пользователи/комнаты/пазлы и т.п.), у которых почти всегда нет
+   * «плохого» направления, поэтому тренд — просто число со стрелкой, без
+   * зелёного/красного (см. sparkCardHtml: не гадаем, рост это хорошо или
+   * плохо для конкретного поля). */
+
+  const METRICS_RANGES = [7, 30, 90];
+
+  async function renderMetrics(body) {
+    body.innerHTML = `
+      <div class="bh-toolbar">
+        ${METRICS_RANGES.map(d => `<button class="bh-btn ${d === metricsDays ? "is-active" : ""}" data-days="${d}">${d} дней</button>`).join("")}
+      </div>
+      <div id="metricsBody"><div class="bh-empty">Загрузка…</div></div>
+    `;
+    for (const btn of body.querySelectorAll("[data-days]")) {
+      btn.onclick = () => { metricsDays = Number(btn.dataset.days); renderMetrics(body); };
+    }
+    const el = document.getElementById("metricsBody");
+
+    let data;
+    try {
+      data = await api(`/api/metrics?days=${metricsDays}`);
+    } catch (e) {
+      el.innerHTML = `<div class="bh-empty">Не удалось загрузить: ${escapeHtml(e.message)}</div>`;
+      return;
+    }
+    if (!data.services.length) { el.innerHTML = `<div class="bh-empty">Сервисы не настроены (SERVICES_JSON)</div>`; return; }
+    el.innerHTML = data.services.map(serviceMetricsHtml).join("");
+  }
+
+  function serviceMetricsHtml(s) {
+    const points = s.points || [];
+    const latest = points[points.length - 1];
+    const head = `<div class="bh-section-title">${escapeHtml(s.name)}</div>`;
+    if (!latest) return `${head}<div class="bh-empty">Пока нет ни одного снимка — появится после ближайшего health-check (раз в час).</div>`;
+
+    // Числовые поля последнего снимка — тот же критерий "typeof v === 'number'",
+    // что и statsAndChartHtml выше, ради того же деления «график/просто значение».
+    // Поле, которого нет в latest (сервис перестал его отдавать), в списке
+    // не появится — это ожидаемо, не ошибка.
+    const fields = Object.keys(latest).filter(k => k !== "ts" && typeof latest[k] === "number");
+    if (!fields.length) return `${head}<div class="bh-empty">У сервиса нет числовых показателей для графика.</div>`;
+    return `${head}<div class="bh-spark-grid">${fields.map(f => sparkCardHtml(f, points)).join("")}</div>`;
+  }
+
+  function sparkCardHtml(field, points) {
+    // Поле могло появиться у сервиса не с самого начала выбранного диапазона
+    // (новая цифра в /internal/stats) — берём только те точки, где оно
+    // реально было числом, а не тянем весь points как есть.
+    const values = points.filter(p => typeof p[field] === "number").map(p => p[field]);
+    const last = values[values.length - 1];
+    if (values.length < 2) {
+      return `<div class="bh-spark-card">
+        <div class="label">${escapeHtml(field)}</div>
+        <div class="value">${escapeHtml(String(last))}</div>
+        <div class="hint">данные ещё копятся</div>
+      </div>`;
+    }
+    const first = values[0];
+    const delta = last - first;
+    // Рост от нуля — делить не на что, показываем абсолютную разницу вместо %.
+    const pct = first !== 0 ? Math.round(delta / Math.abs(first) * 100) : null;
+    const arrow = delta > 0 ? "▲" : delta < 0 ? "▼" : "·";
+    const trendText = pct === null
+      ? `${arrow} ${delta > 0 ? "+" : ""}${delta}`
+      : `${arrow} ${pct > 0 ? "+" : ""}${pct}%`;
+    return `<div class="bh-spark-card">
+      <div class="label">${escapeHtml(field)}</div>
+      ${sparklineSvg(values)}
+      <div class="bh-spark-foot">
+        <b class="value">${escapeHtml(String(last))}</b>
+        <span class="trend">${trendText}</span>
+      </div>
+    </div>`;
+  }
+
+  // Свой SVG вместо библиотеки графиков — тот же приём, что уже есть в
+  // семье BurningHouse (см. Финансов/assets/app.js, drawDynChart): точек
+  // мало (максимум ~90 при дневном диапазоне 90д), полноценный движок ради
+  // этого не нужен. preserveAspectRatio="none" — растягиваем на всю
+  // карточку, это не график для точного чтения значений, а спарклайн-намёк
+  // на форму тренда, id градиента — со счётчиком: на странице одновременно
+  // много таких SVG, общий id="dg" (как в Финансах, там график всегда один)
+  // тут бы путал, на какой path какой градиент ссылается.
+  let sparkGradientSeq = 0;
+  function sparklineSvg(values) {
+    const w = 220, h = 56, pad = 4;
+    const max = Math.max(...values), min = Math.min(...values);
+    const range = max - min || 1;
+    const step = values.length > 1 ? w / (values.length - 1) : w;
+    const pts = values.map((v, i) => [i * step, h - pad - ((v - min) / range) * (h - pad * 2)]);
+    const line = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(" ");
+    const area = `${line} L ${w} ${h} L 0 ${h} Z`;
+    const gid = `bhSpark${sparkGradientSeq++}`;
+    return `<svg class="bh-metric-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+      <defs><linearGradient id="${gid}" x1="0" x2="0" y1="0" y2="1">
+        <stop offset="0" stop-color="var(--flame-tip)" stop-opacity=".3"/>
+        <stop offset="1" stop-color="var(--flame-tip)" stop-opacity="0"/>
+      </linearGradient></defs>
+      <path d="${area}" fill="url(#${gid})"/>
+      <path d="${line}" fill="none" stroke="var(--flame-tip)" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>`;
   }
 
   /* ---------- Подробности сервиса: статистика + график + комнаты + логи ---------- */
