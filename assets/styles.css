@@ -8,9 +8,9 @@
   --dawn-2:#ecd9ff;
 
   --ink:#e8e3f2;
-  --ink-dim:#a89fc2;
-  --card-bg:color-mix(in srgb, var(--night-2) 55%, #000 45%);
-  --card-border:color-mix(in srgb, var(--flame-tip) 22%, transparent);
+  --ink-dim:#b9b0d6;
+  --card-bg:color-mix(in srgb, var(--night-2) 78%, #000 22%);
+  --card-border:color-mix(in srgb, var(--flame-tip) 38%, transparent);
   --ok:#7ddf3c;
   --warn:#ffd447;
   --danger:#ff5c72;
