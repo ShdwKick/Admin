@@ -107,8 +107,12 @@ main{ flex:1; padding:1rem 1.5rem 3rem; max-width:72rem; margin:0 auto; width:10
 .bh-stat-row b{ color:var(--ink); font-weight:600; }
 .bh-card .bh-error{ color:var(--danger); font-size:.85rem; }
 
-/* Карточка сервиса на Обзоре — целиком ссылка на страницу подробностей. */
-a.bh-card{ display:block; text-decoration:none; cursor:pointer; transition:border-color .15s, transform .15s; }
+/* Карточка сервиса на Обзоре — целиком ссылка на страницу подробностей.
+   color:inherit обязателен: без него заголовок красился бы дефолтным
+   цветом браузера для ссылок (синий/лиловый в зависимости от того, была
+   ли ссылка посещена) — вот откуда был пёстрый разнобой цветов заголовков
+   карточек, никак не связанный с брендом сервисов. */
+a.bh-card{ display:block; color:inherit; text-decoration:none; cursor:pointer; transition:border-color .15s, transform .15s; }
 a.bh-card:hover{ border-color:color-mix(in srgb, var(--flame-tip) 45%, var(--card-border)); transform:translateY(-1px); }
 
 .bh-back{
