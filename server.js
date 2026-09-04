@@ -624,6 +624,23 @@ const server = http.createServer(async (req, res) => {
           return json(res, 502, { error: "upstream", message: e.message });
         }
       }
+      // Импорт по параметрам (год/рейтинг/голоса), не по диапазону
+      // kinopoisk_id — см. Movies/server.js importMoviesByFilter про то,
+      // почему диапазон id для этого не годится. Тот же повышенный таймаут,
+      // что и у импорта подборки — тоже синхронно собирает список постранично.
+      const importByFilterMatch = p.match(/^\/api\/services\/([\w-]+)\/movies\/import-by-filter$/);
+      if (importByFilterMatch && method === "POST") {
+        const service = SERVICES.find(s => s.id === importByFilterMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        try {
+          const body = await readJsonBody(req);
+          const data = await callService(service, "/internal/movies/import-by-filter", { method: "POST", body, timeout: 20000 });
+          logSelf("info", "Admin-действие: импорт фильмов по параметрам", { service: service.id, by: admin.username, ...body });
+          return json(res, 200, data);
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
 
       // Библиотека картинок Puzzle (см. её server.js /internal/puzzles,
       // README «Загрузка через Admin») — новые дефолтные пазлы, доступные

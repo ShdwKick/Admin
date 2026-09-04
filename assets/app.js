@@ -446,6 +446,9 @@
         <div class="bh-section-title">Импорт подборки Кинопоиска</div>
         <div id="collectionImport"></div>
 
+        <div class="bh-section-title">Импорт по параметрам</div>
+        <div id="importByFilter"></div>
+
         <div class="bh-section-title">Удаление фильма</div>
         <div id="movieDelete"></div>
       `;
@@ -453,6 +456,7 @@
       loadDetailQueue(id);
       loadPoiskkinoKeys(id);
       wireCollectionImport(id);
+      wireImportByFilter(id);
       wireMovieDelete(id);
     } else if (tab === "library" && id === "puzzle") {
       tabBody.innerHTML = `<div id="puzzleUpload"></div>`;
@@ -854,6 +858,61 @@
     };
 
     await loadList();
+  }
+
+  /** Импорт фильмов ПО ПАРАМЕТРАМ (год/голоса/рейтинг), не по диапазону
+      kinopoisk_id — см. Movies server.js importMoviesByFilter: диапазон id
+      с годом выхода не коррелирует (проверено вживую — у фильмов одного
+      2024-го id разбросаны от сотен тысяч до нескольких миллионов), поэтому
+      «скан по kinopoisk_id» выше для «дай мне недавние фильмы» не годится.
+      Поля формы — свои понятные названия, сервер сам собирает из них
+      синтаксис диапазонов poiskkino.dev ("2018-2027" и т.п.). Список уже
+      импортированных сюда не выводим — в отличие от подборки это не
+      группа, а просто добавка в общий кэш movies, показывать за что
+      зацепиться (кроме самого списка «Из базы» на сайте) нечему. */
+  async function wireImportByFilter(id) {
+    const el = document.getElementById("importByFilter");
+    el.innerHTML = `
+      <div class="bh-toolbar">
+        <input type="number" class="bh-input-narrow" id="filterYearFrom" placeholder="Год от" value="2018">
+        <input type="number" class="bh-input-narrow" id="filterYearTo" placeholder="Год до">
+        <input type="number" class="bh-input-narrow" id="filterVotesMin" placeholder="Голосов КП от" value="3000">
+        <input type="number" class="bh-input-narrow" id="filterRatingMin" placeholder="Рейтинг КП от" step="0.1">
+        <input type="text" class="bh-input-narrow" id="filterGenre" placeholder="Жанр — необязательно">
+        <input type="number" class="bh-input-narrow" id="filterLimit" placeholder="Сколько фильмов" value="250">
+        <button class="bh-btn" id="importByFilterBtn">Импортировать</button>
+      </div>
+      <div id="importByFilterResult"></div>
+    `;
+    const resultEl = document.getElementById("importByFilterResult");
+
+    document.getElementById("importByFilterBtn").onclick = async () => {
+      const body = {
+        yearFrom: document.getElementById("filterYearFrom").value || undefined,
+        yearTo: document.getElementById("filterYearTo").value || undefined,
+        votesKpMin: document.getElementById("filterVotesMin").value || undefined,
+        ratingKpMin: document.getElementById("filterRatingMin").value || undefined,
+        genre: document.getElementById("filterGenre").value.trim() || undefined,
+        limit: document.getElementById("filterLimit").value || undefined,
+      };
+      resultEl.innerHTML = `<div class="bh-empty">Импортирую…</div>`;
+      try {
+        const data = await api(`/api/services/${encodeURIComponent(id)}/movies/import-by-filter`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+        });
+        resultEl.innerHTML = `
+          <div class="bh-card">
+            ${data.partial ? `<div class="bh-stat-row" style="color:var(--warn)">Квота кончилась раньше срока — собрана только часть. Запустите ещё раз позже с теми же параметрами, чтобы дособрать остальное.</div>` : ""}
+            <div class="bh-stat-row"><span>Подходит под фильтр всего</span><b>${data.totalMatched}</b></div>
+            <div class="bh-stat-row"><span>Импортировано</span><b>${data.moviesCount}${data.partial ? " (частично)" : ""}</b></div>
+            ${data.skipped > 0 ? `<div class="bh-stat-row" style="color:var(--warn)"><span>Пропущено (кривые данные у Кинопоиска)</span><b>${data.skipped}</b></div>` : ""}
+            <div class="bh-stat-row"><span>Уже были детали</span><b>${data.alreadyCached}</b></div>
+            <div class="bh-stat-row"><span>Поставлено в очередь докачки</span><b>${data.queued}</b></div>
+          </div>`;
+      } catch (e) {
+        resultEl.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+      }
+    };
   }
 
   /** Добавление картинок в библиотеку Puzzle (см. её server.js
