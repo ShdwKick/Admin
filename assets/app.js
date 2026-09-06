@@ -129,7 +129,7 @@
   // нужен ДО renderShell(): на него ссылается currentRoute(), которую
   // render() вызывает синхронно при первом заходе, ещё до объявления
   // const дальше по файлу.
-  const DETAIL_TABS = ["rooms", "library", "import", "moderation", "logs"];
+  const DETAIL_TABS = ["rooms", "library", "import", "moderation", "feedback", "logs"];
 
   renderShell();
 
@@ -396,7 +396,7 @@
   const ROOM_STATUS = { planning: "в планах", active: "в процессе", done: "завершена" };
   const LOG_RANK = { info: 0, warn: 1, error: 2 };
 
-  const DETAIL_TAB_LABELS = { rooms: "Комнаты", library: "Библиотека", import: "Импорт", moderation: "Модерация", logs: "Логи" };
+  const DETAIL_TAB_LABELS = { rooms: "Комнаты", library: "Библиотека", import: "Импорт", moderation: "Модерация", feedback: "Обратная связь", logs: "Логи" };
 
   /** Подробности сервиса теперь на подвкладках (#service/<id>/<tab>) — у
       Movies под «Библиотекой» скопилось пять разных инструментов (скан,
@@ -479,6 +479,14 @@
       wireCategoryModerationQueue(id);
     } else if (tab === "moderation") {
       tabBody.innerHTML = `<div class="bh-empty">У этого сервиса нет модерации контента</div>`;
+    } else if (tab === "feedback" && id === "puzzle") {
+      tabBody.innerHTML = `<div id="feedbackList"><div class="bh-empty">Загрузка…</div></div>`;
+      loadFeedback(id);
+    } else if (tab === "feedback") {
+      // Форма обратной связи пока только у Puzzle (см. правку «Форма
+      // обратной связи») — тот же принцип, что у «Комнат»/«Модерации» без
+      // соответствующего /internal/*: пусто, а не ошибка.
+      tabBody.innerHTML = `<div class="bh-empty">У этого сервиса нет формы обратной связи</div>`;
     } else if (tab === "import" && id === "puzzle") {
       tabBody.innerHTML = `<div id="pexelsImport"></div>`;
       wirePexelsImport(id);
@@ -555,6 +563,34 @@
     } catch {
       // Обычно значит, что у сервиса просто нет /internal/rooms (пока — только у Trip).
       el.innerHTML = `<div class="bh-empty">Не поддерживается этим сервисом</div>`;
+    }
+  }
+
+  /** Обращения из формы обратной связи в футере Puzzle (см. правку «Форма
+   *  обратной связи», Puzzle server.js /internal/feedback) — только
+   *  просмотр, без approve/reject: это не очередь модерации, ответ автору
+   *  идёт вне сервиса (contact — то, что человек сам оставил для связи). */
+  async function loadFeedback(id) {
+    const el = document.getElementById("feedbackList");
+    try {
+      const data = await api(`/api/services/${encodeURIComponent(id)}/feedback`);
+      const items = data.feedback || [];
+      if (!items.length) { el.innerHTML = `<div class="bh-empty">Пока пусто</div>`; return; }
+      const rows = items.map(f => `
+        <tr>
+          <td>${escapeHtml(f.message)}</td>
+          <td>${f.contact ? escapeHtml(f.contact) : "—"}</td>
+          <td>${f.username ? escapeHtml(f.username) : (f.userId ? `<code>${escapeHtml(f.userId)}</code>` : "Гость")}</td>
+          <td>${f.pageUrl ? `<code>${escapeHtml(f.pageUrl)}</code>` : "—"}</td>
+          <td>${new Date(f.createdAt).toLocaleString("ru-RU")}</td>
+        </tr>`).join("");
+      el.innerHTML = `
+        <table class="bh-table">
+          <thead><tr><th>Сообщение</th><th>Контакт</th><th>От кого</th><th>Страница</th><th>Когда</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    } catch (e) {
+      el.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
     }
   }
 

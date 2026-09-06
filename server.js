@@ -815,6 +815,17 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      // Обратная связь с футера (см. Puzzle server.js /internal/feedback,
+      // правка «Форма обратной связи») — только на чтение, тот же
+      // callService-проброс, что у /internal/rooms.
+      const feedbackMatch = p.match(/^\/api\/services\/([\w-]+)\/feedback$/);
+      if (feedbackMatch && method === "GET") {
+        const service = SERVICES.find(s => s.id === feedbackMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        try { return json(res, 200, await callService(service, "/internal/feedback")); }
+        catch (e) { return json(res, 502, { error: "upstream", message: e.message }); }
+      }
+
       // Модерация загруженных пользователями фото (см. Puzzle server.js
       // /internal/moderation/*, план «Модерация загруженных фото»).
       const modPhotosMatch = p.match(/^\/api\/services\/([\w-]+)\/moderation\/photos$/);
