@@ -158,6 +158,13 @@ a.bh-card:hover{ border-color:color-mix(in srgb, var(--flame-tip) 45%, var(--car
 .bh-spark-foot .trend{ font-size:.78rem; color:var(--ink-dim); white-space:nowrap; }
 
 .bh-toolbar{ display:flex; flex-wrap:wrap; gap:.6rem; align-items:center; margin-bottom:1rem; }
+/* display:flex выше побеждает встроенное [hidden]{display:none} браузера —
+   та же специфичность (0,1,0), а этот author-стиль подключается позже (см.
+   тот же баг-класс у Puzzle, .btn[hidden]/.puzzle-page-mystats[hidden] —
+   найден там раньше в этой же сессии). Без этой строчки .bh-toolbar с
+   атрибутом hidden (см. #puzzleBulkActionsBar, правка «GigaChat-кнопка +
+   bulk edit») визуально остаётся видимым, даже когда JS ставит hidden=true. */
+.bh-toolbar[hidden]{ display:none; }
 select, input[type="text"], input[type="number"]{
   background:var(--card-bg); color:var(--ink); border:1px solid var(--card-border);
   border-radius:.5rem; padding:.4rem .6rem; font:inherit;
@@ -180,6 +187,11 @@ table.bh-table{ width:100%; border-collapse:collapse; font-size:.88rem; }
 table.bh-table th{ text-align:left; color:var(--ink-dim); font-weight:500; padding:.5rem .6rem; border-bottom:1px solid var(--card-border); }
 table.bh-table td{ padding:.5rem .6rem; border-bottom:1px solid color-mix(in srgb, var(--card-border) 60%, transparent); vertical-align:middle; }
 table.bh-table tr:hover td{ background:color-mix(in srgb, var(--flame-tip) 5%, transparent); }
+/* Строка-превью предложения GigaChat (см. правку «GigaChat-кнопка + bulk
+   edit») — сидит прямо под исходной строкой, ещё не применённое предложение,
+   поэтому тем же --warn, что и бейдж «N на модерации»: тот же язык «здесь
+   есть что-то, ждущее решения», не про ошибку/права. */
+table.bh-table tr.bh-giga-preview td{ background:color-mix(in srgb, var(--warn) 10%, transparent); }
 
 .bh-badge{ display:inline-block; font-size:.72rem; padding:.1rem .5rem; border-radius:1rem; border:1px solid var(--card-border); color:var(--ink-dim); }
 .bh-badge.admin{ color:var(--flame-tip); border-color:color-mix(in srgb, var(--flame-tip) 50%, transparent); }

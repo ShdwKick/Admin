@@ -1005,6 +1005,20 @@
         <button class="bh-btn" id="puzzleBulkSaveBtn" disabled>Сохранить изменения (0)</button>
       </div>
       <div id="puzzleBulkSaveResult"></div>
+      <!-- Bulk edit по чекбоксам строк (см. правку «GigaChat-кнопка + bulk
+           edit») — ОТДЕЛЬНО от «Сохранить изменения» выше: тот сохраняет
+           правки, набранные построчно прямо в таблице, этот — действие
+           СРАЗУ на все отмеченные строки разом, без захода в каждую.
+           Скрыт, пока не отмечена хотя бы одна строка (см.
+           updateBulkActionsBar). -->
+      <div class="bh-toolbar" id="puzzleBulkActionsBar" hidden style="align-items:center">
+        <span class="bh-empty" style="padding:0" id="puzzleBulkCount"></span>
+        <div id="puzzleBulkCategoryBox"></div>
+        <button class="bh-btn" id="puzzleBulkCategoryApplyBtn">Применить категорию</button>
+        <button class="bh-btn" id="puzzleBulkSuggestBtn">✨ Предложить названия (GigaChat)</button>
+        <button class="bh-btn danger" id="puzzleBulkDeleteBtn">Удалить отмеченные</button>
+      </div>
+      <div id="puzzleBulkGigaResult"></div>
       <div id="puzzleListBox"><div class="bh-empty">Загрузка…</div></div>
     `;
     const resultEl = document.getElementById("puzzleUploadResult");
@@ -1015,6 +1029,14 @@
     const bulkSaveResultEl = document.getElementById("puzzleBulkSaveResult");
     const filterSearchInput = document.getElementById("puzzleFilterSearch");
     const filterCategorySelect = document.getElementById("puzzleFilterCategory");
+    const bulkActionsBar = document.getElementById("puzzleBulkActionsBar");
+    const bulkCountEl = document.getElementById("puzzleBulkCount");
+    const bulkCategoryBox = document.getElementById("puzzleBulkCategoryBox");
+    const bulkGigaResultEl = document.getElementById("puzzleBulkGigaResult");
+    // Отмеченные id — не переживает смену фильтра/перезагрузку списка
+    // нарочно (см. applyFilter/loadList ниже, оба сбрасывают): отмечать
+    // строки, которые сейчас не видно под фильтром, было бы неочевидно.
+    const selectedIds = new Set();
 
     // Одна категория на пазл (см. план «Один пазл — одна категория») —
     // везде, где раньше была группа чекбоксов, теперь одиночный <select>.
@@ -1103,15 +1125,26 @@
     // Название+категории сохраняются одним вызовом — из строки таблицы и из
     // модалки (см. openPuzzleEditModal ниже), оба места дёргают эту же
     // функцию, а не держат по копии Promise.all с теми же двумя эндпоинтами.
-    async function savePuzzle(pid, title, categoryId) {
+    // titleEn — необязательный (см. правку «GigaChat-кнопка + bulk edit»):
+    // строка таблицы его не задаёт вовсе (там нет такого поля ввода),
+    // только применение предложения GigaChat передаёт его явно.
+    async function savePuzzle(pid, title, categoryId, titleEn) {
+      const titleBody = titleEn !== undefined ? { title, titleEn } : { title };
       await Promise.all([
         api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(pid)}/title`, {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }),
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(titleBody),
         }),
         api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(pid)}/category`, {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ categoryId }),
         }),
       ]);
+    }
+
+    /** Одно предложение GigaChat для пазла pid — только читает, не пишет
+     *  (см. Puzzle server.js /internal/puzzles/:id/title/suggest). Общая
+     *  для кнопки «✨» на строке и массового «Предложить названия» ниже. */
+    async function suggestTitle(pid) {
+      return api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(pid)}/title/suggest`, { method: "POST" });
     }
 
     /** Редактирование прямо в модалке «фото целиком» (см. openPhotoModalShell)
@@ -1169,12 +1202,18 @@
     // десятками тысяч строк, отдельная серверная фильтрация/пагинация тут
     // не окупается (в отличие, скажем, от витрины фильмов у Movies).
     function renderList(rows) {
+      // Отмеченные строки — сброс на каждый новый рендер (смена фильтра,
+      // перезагрузка после сохранения/удаления, см. комментарий у
+      // selectedIds выше) — не переживают, чтобы не отмечать невидимое.
+      selectedIds.clear();
+      updateBulkActionsBar();
       if (!rows.length) { listBox.innerHTML = `<div class="bh-empty">${allPuzzles.length ? "Ничего не подходит под фильтр" : "Пока ничего не добавлено"}</div>`; return; }
       listBox.innerHTML = `
         <table class="bh-table">
-          <thead><tr><th></th><th>Название</th><th>Категория</th><th>Вариантов</th><th>Добавлено</th><th></th></tr></thead>
+          <thead><tr><th><input type="checkbox" id="puzzleSelectAll" title="Отметить все"></th><th></th><th>Название</th><th>Категория</th><th>Вариантов</th><th>Добавлено</th><th></th></tr></thead>
           <tbody>${rows.map(p => `
             <tr data-id="${escapeHtml(p.id)}">
+              <td><input type="checkbox" data-role="select"></td>
               <td><img class="bh-modal-thumb" src="${escapeHtml(baseUrl + p.imageUrl)}" alt="" style="width:48px;height:36px;object-fit:cover;border-radius:4px;display:block"></td>
               <td><input type="text" class="bh-input-narrow" data-role="title" value="${escapeHtml(p.title)}" style="width:11em"></td>
               <td>
@@ -1183,6 +1222,7 @@
               <td>${p.variants}</td>
               <td>${new Date(p.createdAt).toLocaleDateString("ru-RU")}</td>
               <td class="bh-toolbar" style="margin:0">
+                <button class="bh-btn" data-action="suggest" title="Предложить название через GigaChat">✨</button>
                 <button class="bh-btn" data-action="save">Сохранить</button>
                 <button class="bh-btn danger" data-action="delete">Удалить</button>
               </td>
@@ -1205,6 +1245,30 @@
         input.addEventListener("change", updateBulkSaveButton);
       });
       updateBulkSaveButton();
+      // Чекбоксы строк — bulk edit (см. правку «GigaChat-кнопка + bulk edit»),
+      // отдельно от «Сохранить изменения» (та копит правки полей, эта копит
+      // ВЫБОР строк для действия сразу над всеми). «Отметить все» в шапке —
+      // обычный чекбокс, не нативный tristate: просто синхронизируем его
+      // checked/indeterminate по факту клика по нему самому или по строкам.
+      const selectAllBox = listBox.querySelector("#puzzleSelectAll");
+      listBox.querySelectorAll('input[data-role="select"]').forEach(cb => {
+        cb.addEventListener("change", () => {
+          const pid = cb.closest("tr").dataset.id;
+          if (cb.checked) selectedIds.add(pid); else selectedIds.delete(pid);
+          selectAllBox.checked = rows.every(r => selectedIds.has(String(r.id)));
+          selectAllBox.indeterminate = !selectAllBox.checked && selectedIds.size > 0;
+          updateBulkActionsBar();
+        });
+      });
+      selectAllBox.addEventListener("change", () => {
+        listBox.querySelectorAll('input[data-role="select"]').forEach(cb => {
+          cb.checked = selectAllBox.checked;
+          const pid = cb.closest("tr").dataset.id;
+          if (selectAllBox.checked) selectedIds.add(pid); else selectedIds.delete(pid);
+        });
+        selectAllBox.indeterminate = false;
+        updateBulkActionsBar();
+      });
       listBox.querySelectorAll("button[data-action='delete']").forEach(btn => {
         btn.onclick = async () => {
           const tr = btn.closest("tr");
@@ -1245,6 +1309,176 @@
           btn.disabled = false;
         };
       });
+      // «✨» — предложение GigaChat для ОДНОЙ строки, тот же принцип, что и
+      // у массового запуска ниже (#puzzleBulkSuggestBtn): показываем
+      // предложение и ждём подтверждения, не переписываем title сразу.
+      // Превью — отдельная строка таблицы сразу под исходной (colspan на
+      // всю ширину), не модалка — не хочется прятать саму строку, пока
+      // сравниваешь.
+      listBox.querySelectorAll("button[data-action='suggest']").forEach(btn => {
+        btn.onclick = async () => {
+          const tr = btn.closest("tr");
+          const pid = tr.dataset.id;
+          tr.nextElementSibling?.classList.contains("bh-giga-preview") && tr.nextElementSibling.remove();
+          btn.disabled = true;
+          const originalHtml = btn.innerHTML;
+          btn.textContent = "…";
+          try {
+            const data = await suggestTitle(pid);
+            const preview = document.createElement("tr");
+            preview.className = "bh-giga-preview";
+            preview.innerHTML = `<td></td><td colspan="6">
+              <div class="bh-toolbar" style="margin:.3rem 0">
+                <span class="bh-empty" style="padding:0">Предложено GigaChat:</span>
+                <b>${escapeHtml(data.title)}</b>
+                <span style="opacity:.7">EN: ${escapeHtml(data.titleEn)}</span>
+                <button class="bh-btn" data-action="apply-suggestion">Применить</button>
+                <button class="bh-btn" data-action="dismiss-suggestion">Отмена</button>
+              </div>
+            </td>`;
+            tr.after(preview);
+            preview.querySelector('[data-action="dismiss-suggestion"]').onclick = () => preview.remove();
+            preview.querySelector('[data-action="apply-suggestion"]').onclick = async () => {
+              const applyBtn = preview.querySelector('[data-action="apply-suggestion"]');
+              applyBtn.disabled = true;
+              const categorySelect = tr.querySelector('[data-role="category"] select');
+              const categoryId = categorySelect ? categorySelect.value : "";
+              try {
+                await savePuzzle(pid, data.title, categoryId, data.titleEn);
+                const p = allPuzzles.find(x => String(x.id) === pid);
+                if (p) { p.title = data.title; p.titleEn = data.titleEn; p.categoryId = categoryId || null; }
+                tr.querySelector('[data-role="title"]').value = data.title;
+                preview.remove();
+                updateBulkSaveButton();
+              } catch (e) { alert("Не получилось: " + e.message); applyBtn.disabled = false; }
+            };
+          } catch (e) {
+            alert("Не получилось: " + e.message);
+          }
+          btn.disabled = false;
+          btn.innerHTML = originalHtml;
+        };
+      });
+    }
+
+    /** Показывает/прячет панель массовых действий и обновляет счётчик — на
+     *  каждое (де)отмечание строки (см. renderList). */
+    function updateBulkActionsBar() {
+      const n = selectedIds.size;
+      bulkActionsBar.hidden = n === 0;
+      if (!n) return;
+      bulkCountEl.textContent = `Отмечено: ${n}`;
+      bulkCategoryBox.innerHTML = categorySelectHtml("puzzleBulkCategorySelect", "");
+    }
+
+    document.getElementById("puzzleBulkCategoryApplyBtn").onclick = async () => {
+      const btn = document.getElementById("puzzleBulkCategoryApplyBtn");
+      const select = bulkCategoryBox.querySelector("select");
+      const categoryId = select ? select.value : "";
+      const ids = [...selectedIds];
+      if (!ids.length) return;
+      btn.disabled = true;
+      let done = 0, failed = 0;
+      for (const pid of ids) {
+        try {
+          await api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(pid)}/category`, {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ categoryId }),
+          });
+          done++;
+        } catch { failed++; }
+      }
+      bulkGigaResultEl.innerHTML = `<div class="bh-card"><div class="bh-stat-row"><span>Категория применена</span><b>${done}</b></div>${failed ? `<div class="bh-stat-row"><span>Ошибок</span><b>${failed}</b></div>` : ""}</div>`;
+      btn.disabled = false;
+      await loadList();
+    };
+
+    document.getElementById("puzzleBulkDeleteBtn").onclick = async () => {
+      const ids = [...selectedIds];
+      if (!ids.length) return;
+      if (!confirm(`Удалить ${ids.length} пазлов из библиотеки? Те, которыми уже играли в какой-то комнате, сервис откажется удалять.`)) return;
+      const btn = document.getElementById("puzzleBulkDeleteBtn");
+      btn.disabled = true;
+      let done = 0, failed = 0;
+      for (const pid of ids) {
+        bulkGigaResultEl.innerHTML = `<div class="bh-empty">Удаляю ${done + failed + 1} из ${ids.length}…</div>`;
+        try {
+          await api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(pid)}`, { method: "DELETE" });
+          done++;
+        } catch { failed++; }
+      }
+      bulkGigaResultEl.innerHTML = `<div class="bh-card"><div class="bh-stat-row"><span>Удалено</span><b>${done}</b></div>${failed ? `<div class="bh-stat-row"><span>Не удалось (в комнате)</span><b>${failed}</b></div>` : ""}</div>`;
+      btn.disabled = false;
+      await loadList();
+    };
+
+    /** Массовое предложение GigaChat (см. правку «GigaChat-кнопка + bulk
+     *  edit») — последовательно, не Promise.all (тот же приём, что у
+     *  bulkSaveBtn/импорта с Pexels: виден прогресс, не бьём по Puzzle
+     *  пачкой запросов на десятки строк разом, каждый запрос сам по себе не
+     *  быстрый — реально ходит в GigaChat). Результат — список с чекбоксами
+     *  (по умолчанию отмечены все, кроме тех, что упали с ошибкой) и одной
+     *  кнопкой «Применить отмеченные» — тот же принцип «показать и
+     *  подождать подтверждения», что и у одиночной «✨» в renderList.*/
+    document.getElementById("puzzleBulkSuggestBtn").onclick = async () => {
+      const ids = [...selectedIds];
+      if (!ids.length) return;
+      const btn = document.getElementById("puzzleBulkSuggestBtn");
+      btn.disabled = true;
+      const results = [];
+      for (const [i, pid] of ids.entries()) {
+        const p = allPuzzles.find(x => String(x.id) === pid);
+        bulkGigaResultEl.innerHTML = `<div class="bh-empty">Спрашиваю GigaChat — ${i + 1} из ${ids.length}…</div>`;
+        try {
+          const data = await suggestTitle(pid);
+          results.push({ pid, oldTitle: p ? p.title : pid, title: data.title, titleEn: data.titleEn, categoryId: p ? p.categoryId : "", error: null });
+        } catch (e) {
+          results.push({ pid, oldTitle: p ? p.title : pid, error: e.message });
+        }
+      }
+      btn.disabled = false;
+      renderBulkGigaReview(results);
+    };
+
+    function renderBulkGigaReview(results) {
+      const ok = results.filter(r => !r.error);
+      const failed = results.filter(r => r.error);
+      bulkGigaResultEl.innerHTML = `
+        <table class="bh-table">
+          <thead><tr><th></th><th>Было</th><th>Стало (RU)</th><th>Стало (EN)</th></tr></thead>
+          <tbody>${ok.map(r => `
+            <tr data-pid="${escapeHtml(r.pid)}">
+              <td><input type="checkbox" checked></td>
+              <td>${escapeHtml(r.oldTitle)}</td>
+              <td>${escapeHtml(r.title)}</td>
+              <td style="opacity:.7">${escapeHtml(r.titleEn)}</td>
+            </tr>`).join("")}
+          ${failed.map(r => `
+            <tr><td></td><td>${escapeHtml(r.oldTitle)}</td><td colspan="2" style="color:var(--danger)">Ошибка: ${escapeHtml(r.error)}</td></tr>`).join("")}
+          </tbody>
+        </table>
+        <div class="bh-toolbar">
+          <button class="bh-btn" id="bulkGigaApplyBtn">Применить отмеченные</button>
+          <button class="bh-btn" id="bulkGigaCancelBtn">Отмена</button>
+        </div>`;
+      document.getElementById("bulkGigaCancelBtn").onclick = () => { bulkGigaResultEl.innerHTML = ""; };
+      document.getElementById("bulkGigaApplyBtn").onclick = async () => {
+        const applyBtn = document.getElementById("bulkGigaApplyBtn");
+        applyBtn.disabled = true;
+        const checked = [...bulkGigaResultEl.querySelectorAll("tr[data-pid]")].filter(tr => tr.querySelector("input").checked);
+        let done = 0, failedApply = 0;
+        for (const tr of checked) {
+          const pid = tr.dataset.pid;
+          const r = ok.find(x => x.pid === pid);
+          try {
+            await savePuzzle(pid, r.title, r.categoryId || "", r.titleEn);
+            const p = allPuzzles.find(x => String(x.id) === pid);
+            if (p) { p.title = r.title; p.titleEn = r.titleEn; }
+            done++;
+          } catch { failedApply++; }
+        }
+        bulkGigaResultEl.innerHTML = `<div class="bh-card"><div class="bh-stat-row"><span>Применено</span><b>${done}</b></div>${failedApply ? `<div class="bh-stat-row"><span>Ошибок</span><b>${failedApply}</b></div>` : ""}</div>`;
+        await loadList();
+      };
     }
 
     /** Строки, у которых название/категория в DOM разошлись с тем, что
