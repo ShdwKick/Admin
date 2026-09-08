@@ -504,6 +504,21 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      // Подробности одной комнаты (клик по строке на вкладке «Комнаты», см.
+      // Admin/assets/app.js openRoomModal) — тот же принцип, что у /rooms
+      // выше: не все сервисы это умеют (сейчас только Puzzle), тогда просто
+      // 404 от сервиса уходит наверх как upstream-ошибка.
+      const roomDetailMatch = p.match(/^\/api\/services\/([\w-]+)\/rooms\/([\w-]+)$/);
+      if (roomDetailMatch && method === "GET") {
+        const service = SERVICES.find(s => s.id === roomDetailMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        try {
+          return json(res, 200, await callService(service, `/internal/rooms/${encodeURIComponent(roomDetailMatch[2])}`));
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
+
       // Расширение библиотеки диапазоном kinopoisk_id (сейчас реализовано
       // только у Movies, см. её server.js /internal/library/scan) — тот же
       // принцип, что у /rooms выше: не все сервисы это умеют, тогда просто

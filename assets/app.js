@@ -540,7 +540,7 @@
     const tabBody = document.getElementById("detailTabBody");
     if (tab === "rooms") {
       tabBody.innerHTML = `<div id="detailRooms"><div class="bh-empty">Загрузка…</div></div>`;
-      loadRooms(id);
+      loadRooms(id, s.baseUrl);
     } else if (tab === "library" && id === "movies") {
       tabBody.innerHTML = `
         <div class="bh-section-title">Скан по kinopoisk_id</div>
@@ -651,14 +651,22 @@
     return chart + restCard;
   }
 
-  async function loadRooms(id) {
+  // Подробности комнаты по клику на строку (см. openRoomModal) — пока
+  // реализовано только у Puzzle, у него это единственный сервис с понятием
+  // "какие пазлы там собирали" (см. /internal/rooms/:id в Puzzle server.js).
+  // У Trip своих "комнат"-поездок с деталями пока нет — строки там остаются
+  // обычными, некликабельными, как раньше.
+  const ROOM_DETAIL_SUPPORTED = id => id === "puzzle";
+
+  async function loadRooms(id, baseUrl) {
     const el = document.getElementById("detailRooms");
     try {
       const data = await api(`/api/services/${encodeURIComponent(id)}/rooms`);
       const rooms = data.rooms || [];
       if (!rooms.length) { el.innerHTML = `<div class="bh-empty">Пусто</div>`; return; }
+      const clickable = ROOM_DETAIL_SUPPORTED(id);
       const rows = rooms.map(r => `
-        <tr>
+        <tr ${clickable ? `class="bh-row-clickable" data-room-id="${escapeHtml(r.id)}" title="Открыть подробности комнаты"` : ""}>
           <td>${escapeHtml(r.title || "—")}</td>
           <td>${escapeHtml(r.destination || "—")}</td>
           <td>${escapeHtml(ROOM_STATUS[r.status] || r.status || "—")}</td>
@@ -672,10 +680,83 @@
           <thead><tr><th>Название</th><th>Направление</th><th>Статус</th><th>Участники</th><th>Мест</th><th>Код</th><th>Создана</th></tr></thead>
           <tbody>${rows}</tbody>
         </table></div>`;
+      if (clickable) {
+        el.querySelectorAll("tr[data-room-id]").forEach(tr => {
+          tr.onclick = () => openRoomModal(id, baseUrl, tr.dataset.roomId, tr.children[0].textContent);
+        });
+      }
     } catch {
       // Обычно значит, что у сервиса просто нет /internal/rooms (пока — только у Trip).
       el.innerHTML = `<div class="bh-empty">Не поддерживается этим сервисом</div>`;
     }
+  }
+
+  /** Подробности комнаты (клик по строке на вкладке «Комнаты» — только там,
+      где ROOM_DETAIL_SUPPORTED, см. loadRooms выше): участники и какие пазлы
+      там реально собирали (room_sessions), плюс что добавлено в библиотеку
+      комнаты, но ни разу не начинали (см. /internal/rooms/:id в Puzzle
+      server.js). Картинки нет ни одной "главной" — комната не фото, поэтому
+      openPhotoModalShell зовём без imgUrl. */
+  async function openRoomModal(id, baseUrl, roomId, roomTitle) {
+    const backdrop = openPhotoModalShell(roomTitle, null, `<div class="bh-empty">Загрузка…</div>`);
+    const body = backdrop.querySelector(".bh-modal-fields, .bh-empty");
+    let detail;
+    try {
+      detail = await api(`/api/services/${encodeURIComponent(id)}/rooms/${encodeURIComponent(roomId)}`);
+    } catch (e) {
+      body.outerHTML = `<div class="bh-empty error">Не удалось загрузить: ${escapeHtml(e.message)}</div>`;
+      return;
+    }
+
+    const members = detail.members || [];
+    const membersRows = members.map(m => `
+      <tr>
+        <td>${escapeHtml(m.name || m.username || "—")}${m.role === "owner" ? ' <span class="bh-badge admin">владелец</span>' : ""}</td>
+        <td>${m.username ? `<code>${escapeHtml(m.username)}</code>` : "—"}</td>
+        <td>${new Date(m.joinedAt).toLocaleString("ru-RU")}</td>
+      </tr>`).join("");
+
+    const sessions = detail.sessions || [];
+    const sessionsHtml = sessions.length
+      ? `<div class="bh-table-wrap"><table class="bh-table">
+          <thead><tr><th></th><th>Пазл</th><th>Прогресс</th><th>Начали</th></tr></thead>
+          <tbody>${sessions.map(s => `
+            <tr>
+              <td><img src="${escapeHtml(baseUrl + s.imageUrl)}" alt="" style="width:48px;height:36px;object-fit:cover;border-radius:4px;display:block"></td>
+              <td>${escapeHtml(s.title)}</td>
+              <td>${s.piecesPlaced} / ${s.piecesTotal}${s.completedAt ? " — собран" : ""}</td>
+              <td>${new Date(s.startedAt).toLocaleString("ru-RU")}</td>
+            </tr>`).join("")}</tbody>
+        </table></div>`
+      : `<div class="bh-empty">Пока никто ничего не собирал</div>`;
+
+    const added = detail.addedPuzzles || [];
+    const addedHtml = added.length
+      ? `<div class="bh-table-wrap"><table class="bh-table">
+          <thead><tr><th></th><th>Пазл</th><th>Добавлено</th></tr></thead>
+          <tbody>${added.map(a => `
+            <tr>
+              <td><img src="${escapeHtml(baseUrl + a.imageUrl)}" alt="" style="width:48px;height:36px;object-fit:cover;border-radius:4px;display:block"></td>
+              <td>${escapeHtml(a.title || "—")}</td>
+              <td>${new Date(a.addedAt).toLocaleString("ru-RU")}</td>
+            </tr>`).join("")}</tbody>
+        </table></div>`
+      : "";
+
+    body.outerHTML = `
+      <div class="bh-modal-fields">
+        <div class="bh-stat-row"><span>Код приглашения</span><b>${detail.room.joinCode ? `<code>${escapeHtml(detail.room.joinCode)}</code>` : "—"}</b></div>
+        <div class="bh-stat-row"><span>Создана</span><b>${escapeHtml(new Date(detail.room.createdAt).toLocaleString("ru-RU"))}</b></div>
+      </div>
+      <div class="bh-section-title">Участники</div>
+      <div class="bh-table-wrap"><table class="bh-table">
+        <thead><tr><th>Имя</th><th>Логин</th><th>Присоединился</th></tr></thead>
+        <tbody>${membersRows}</tbody>
+      </table></div>
+      <div class="bh-section-title">Пазлы, которые собирали</div>
+      ${sessionsHtml}
+      ${added.length ? `<div class="bh-section-title">Добавлено в библиотеку комнаты, но не собирали</div>${addedHtml}` : ""}
+    `;
   }
 
   /** Обращения из формы обратной связи в футере Puzzle (см. правку «Форма
@@ -1994,7 +2075,7 @@
           <h3>${escapeHtml(title)}</h3>
           <button class="bh-modal-close" aria-label="Закрыть">×</button>
         </div>
-        <img src="${escapeHtml(imgUrl)}" alt="">
+        ${imgUrl ? `<img src="${escapeHtml(imgUrl)}" alt="">` : ""}
         ${bodyHtml}
       </div>
     `;

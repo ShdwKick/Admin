@@ -209,6 +209,12 @@ table.bh-table{ width:100%; border-collapse:collapse; font-size:.88rem; }
 table.bh-table th{ text-align:left; color:var(--ink-dim); font-weight:500; padding:.5rem .6rem; border-bottom:1px solid var(--card-border); }
 table.bh-table td{ padding:.5rem .6rem; border-bottom:1px solid color-mix(in srgb, var(--card-border) 60%, transparent); vertical-align:middle; }
 table.bh-table tr:hover td{ background:color-mix(in srgb, var(--flame-tip) 5%, transparent); }
+/* Строка комнаты, по которой можно кликнуть за подробностями (см.
+   openRoomModal в app.js) — тот же hover, что у всех строк, плюс курсор,
+   чтобы было заметно, что тут есть куда провалиться (не все таблицы
+   кликабельны, обычный tr:hover одного курсора не даёт). */
+table.bh-table tr.bh-row-clickable{ cursor:pointer; }
+table.bh-table tr.bh-row-clickable:hover td{ background:color-mix(in srgb, var(--flame-tip) 10%, transparent); }
 /* Строка-превью предложения GigaChat (см. правку «GigaChat-кнопка + bulk
    edit») — сидит прямо под исходной строкой, ещё не применённое предложение,
    поэтому тем же --warn, что и бейдж «N на модерации»: тот же язык «здесь
