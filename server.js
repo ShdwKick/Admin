@@ -823,13 +823,16 @@ const server = http.createServer(async (req, res) => {
       // server.js /internal/puzzles/:id/title/suggest, правка «GigaChat-
       // кнопка + bulk edit в Admin») — только читает, в лог не пишем: это
       // не действие над данными сервиса, а черновик, который админ ещё
-      // может отклонить.
+      // может отклонить. body.mode прокидывается как есть (см. правку
+      // «Кнопка GigaChat по фото + тексту в модалке пазла») — Admin не
+      // знает, что означает "image", просто передаёт дальше.
       const puzzleSuggestMatch = p.match(/^\/api\/services\/([\w-]+)\/puzzles\/([\w-]+)\/title\/suggest$/);
       if (puzzleSuggestMatch && method === "POST") {
         const service = SERVICES.find(s => s.id === puzzleSuggestMatch[1]);
         if (!service) return json(res, 404, { error: "unknown_service" });
+        const body = await readJsonBody(req);
         try {
-          const data = await callService(service, `/internal/puzzles/${encodeURIComponent(puzzleSuggestMatch[2])}/title/suggest`, { method: "POST", timeout: 20000 });
+          const data = await callService(service, `/internal/puzzles/${encodeURIComponent(puzzleSuggestMatch[2])}/title/suggest`, { method: "POST", body, timeout: 20000 });
           return json(res, 200, data);
         } catch (e) {
           return json(res, 502, { error: "upstream", message: e.message });

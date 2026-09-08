@@ -1243,9 +1243,15 @@
 
     /** Одно предложение GigaChat для пазла pid — только читает, не пишет
      *  (см. Puzzle server.js /internal/puzzles/:id/title/suggest). Общая
-     *  для кнопки «✨» на строке и массового «Предложить названия» ниже. */
-    async function suggestTitle(pid) {
-      return api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(pid)}/title/suggest`, { method: "POST" });
+     *  для кнопки «✨» на строке, массового «Предложить названия» ниже и
+     *  двух кнопок в модалке «фото целиком» (см. openPuzzleEditModal). mode
+     *  — "text" (по умолчанию, дешевле и точнее для существующего названия)
+     *  или "image" (по фото + старому названию, см. правку «Кнопка GigaChat
+     *  по фото + тексту в модалке пазла»). */
+    async function suggestTitle(pid, mode) {
+      return api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(pid)}/title/suggest`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: mode || "text" }),
+      });
     }
 
     /** Редактирование прямо в модалке «фото целиком» (см. openPhotoModalShell)
@@ -1258,9 +1264,16 @@
       const backdrop = openPhotoModalShell(p.title, baseUrl + p.imageUrl, `
         <div class="bh-modal-fields">
           <label style="display:flex;flex-direction:column;gap:.3rem">
-            <span>Название</span>
+            <span style="display:flex;align-items:center;justify-content:space-between;gap:.5rem">
+              <span>Название</span>
+              <span class="bh-toolbar" style="margin:0;gap:.3rem">
+                <button class="bh-btn" id="bhSuggestText" type="button" title="Предложить название по старому тексту через GigaChat"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M4 6h16M4 12h10M4 18h7"/></svg> По тексту</button>
+                <button class="bh-btn" id="bhSuggestImage" type="button" title="Предложить название по фото + старому тексту через GigaChat"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg> По фото</button>
+              </span>
+            </span>
             <input type="text" id="bhEditTitle" value="${escapeHtml(p.title)}">
           </label>
+          <div id="bhGigaPreview" hidden></div>
           <label style="display:flex;flex-direction:column;gap:.3rem;margin-top:.7rem">
             <span>Категория</span>
             ${categorySelectHtml("bhEditCategory", p.categoryId || "")}
@@ -1272,6 +1285,47 @@
           <button class="bh-btn danger" id="bhEditDelete">Удалить</button>
         </div>
       `);
+      // «✨ по тексту» / «✨ по фото» — та же механика предложения, что у
+      // построчной кнопки в таблице (см. ниже, data-action="suggest"):
+      // показываем предложение и ждём подтверждения, ничего не применяем
+      // сразу. Отличаются только режимом (mode), который сервер понимает
+      // сам — Admin просто прокидывает "text"/"image" дальше (см. Puzzle
+      // server.js /internal/puzzles/:id/title/suggest).
+      const preview = backdrop.querySelector("#bhGigaPreview");
+      const runSuggest = async (mode, btn) => {
+        const otherBtn = backdrop.querySelector(mode === "image" ? "#bhSuggestText" : "#bhSuggestImage");
+        btn.disabled = true;
+        otherBtn.disabled = true;
+        const originalText = btn.textContent;
+        btn.textContent = "…";
+        try {
+          const data = await suggestTitle(p.id, mode);
+          preview.hidden = false;
+          preview.innerHTML = `
+            <div class="bh-toolbar" style="margin:.5rem 0;flex-wrap:wrap">
+              <span class="bh-empty" style="padding:0">Предложено GigaChat (${mode === "image" ? "по фото" : "по тексту"}):</span>
+              <b>${escapeHtml(data.title)}</b>
+              <span style="opacity:.7">EN: ${escapeHtml(data.titleEn)}</span>
+              <button class="bh-btn" id="bhGigaApply" type="button">Применить</button>
+              <button class="bh-btn" id="bhGigaDismiss" type="button">Отмена</button>
+            </div>`;
+          preview.querySelector("#bhGigaDismiss").onclick = () => { preview.hidden = true; preview.innerHTML = ""; };
+          preview.querySelector("#bhGigaApply").onclick = () => {
+            backdrop.querySelector("#bhEditTitle").value = data.title;
+            preview.hidden = true;
+            preview.innerHTML = "";
+            preview.dataset.appliedTitle = data.title;
+            preview.dataset.titleEn = data.titleEn;
+          };
+        } catch (e) {
+          alert("Не получилось: " + e.message);
+        }
+        btn.disabled = false;
+        otherBtn.disabled = false;
+        btn.textContent = originalText;
+      };
+      backdrop.querySelector("#bhSuggestText").onclick = (e) => runSuggest("text", e.currentTarget);
+      backdrop.querySelector("#bhSuggestImage").onclick = (e) => runSuggest("image", e.currentTarget);
       backdrop.querySelector("#bhEditSave").onclick = async () => {
         const titleInput = backdrop.querySelector("#bhEditTitle");
         const title = titleInput.value.trim();
@@ -1281,7 +1335,13 @@
         const saveBtn = backdrop.querySelector("#bhEditSave");
         saveBtn.disabled = true;
         try {
-          await savePuzzle(p.id, title, categoryId);
+          // titleEn — только если title всё ещё совпадает с последним
+          // применённым предложением GigaChat (см. «Применить» в runSuggest
+          // выше): иначе админ мог поправить текст руками уже ПОСЛЕ
+          // применения, и старый EN-перевод ему бы уже не соответствовал
+          // (savePuzzle с titleEn===undefined его тогда не трогает).
+          const titleEn = preview.dataset.appliedTitle === title ? preview.dataset.titleEn : undefined;
+          await savePuzzle(p.id, title, categoryId, titleEn);
           closePhotoModal();
           await loadList();
         } catch (e) { alert("Не получилось: " + e.message); saveBtn.disabled = false; }
