@@ -107,7 +107,7 @@
   } catch (e) {
     if (e instanceof ForbiddenError) return showForbiddenGate();
     if (e.name === "AuthRequiredError") return; // showLoginGate уже вызван внутри api()
-    app.innerHTML = `<div class="bh-empty">Не удалось загрузить: ${escapeHtml(e.message)}</div>`;
+    app.innerHTML = `<div class="bh-empty error">Не удалось загрузить: ${escapeHtml(e.message)}</div>`;
     return;
   }
 
@@ -121,6 +121,15 @@
   // Таймер автообновления логов (см. wireLogs) — так же один на всё
   // приложение и чистится в render() при уходе со страницы сервиса.
   let logTimer = null;
+  // Поллинг бейджа «N на модерации» (карточка на «Обзоре» + вкладка
+  // «Модерация» на странице сервиса) — тот же принцип, что у scanTimer/
+  // logTimer: один на всё приложение, объявлен до renderShell() (иначе TDZ),
+  // чистится в render() при уходе со страницы. Только он не перерисовывает
+  // всю страницу целиком (это сбросило бы, например, набранный запрос на
+  // вкладке «Импорт» или отмеченные чекбоксы в очереди) — патчит точечно
+  // только карточки/бейдж, дальше см. renderOverview/renderServiceDetail.
+  let moderationPollTimer = null;
+  const MODERATION_POLL_MS = 30000;
   // Выбранный диапазон вкладки «Метрики» (см. renderMetrics) — переживает
   // только текущую сессию вкладки в браузере, не localStorage: это не
   // настройка, а сиюминутный выбор «сейчас смотрю за 7/30/90 дней».
@@ -168,6 +177,7 @@
       // #libraryScan, которого уже нет в DOM после следующего innerHTML.
       if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
       if (logTimer) { clearInterval(logTimer); logTimer = null; }
+      if (moderationPollTimer) { clearInterval(moderationPollTimer); moderationPollTimer = null; }
       const route = currentRoute();
       tabs.forEach(t => t.classList.toggle("is-active", t.dataset.tab === (route.view === "service" ? null : route.view)));
       body.innerHTML = `<div class="bh-empty">Загрузка…</div>`;
@@ -179,7 +189,7 @@
       } catch (e) {
         if (e instanceof ForbiddenError) return showForbiddenGate();
         if (e.name === "AuthRequiredError") return;
-        body.innerHTML = `<div class="bh-empty">Ошибка: ${escapeHtml(e.message)}</div>`;
+        body.innerHTML = `<div class="bh-empty error">Ошибка: ${escapeHtml(e.message)}</div>`;
       }
     }
     window.addEventListener("hashchange", render);
@@ -191,8 +201,19 @@
   async function renderOverview(body) {
     const data = await api("/api/overview");
     if (!data.services.length) { body.innerHTML = `<div class="bh-empty">Сервисы не настроены (SERVICES_JSON)</div>`; return; }
-    body.innerHTML = `<div id="healthBanner"></div><div class="bh-grid">${data.services.map(cardHtml).join("")}</div>`;
+    body.innerHTML = `<div id="healthBanner"></div><div class="bh-grid" id="overviewGrid">${data.services.map(cardHtml).join("")}</div>`;
     wireHealthBanner();
+
+    // Бейдж «N на модерации» на карточках иначе виден только тем, кто зашёл
+    // на «Обзор» уже после того, как что-то попало в очередь — обновляем его
+    // тут же, пока страница открыта, вместо того чтобы ждать ручного F5.
+    moderationPollTimer = setInterval(async () => {
+      const grid = document.getElementById("overviewGrid");
+      if (!grid) return; // ушли со страницы, пока ждали интервал
+      let fresh;
+      try { fresh = await api("/api/overview"); } catch { return; } // тихо: это фон, не основной запрос страницы
+      grid.innerHTML = fresh.services.map(cardHtml).join("");
+    }, MODERATION_POLL_MS);
   }
 
   /** Баннер health-check (см. Admin/server.js runHealthCheck) — раз в час
@@ -269,7 +290,10 @@
       </a>`;
     }
     // Сокращённый список — 5 первых показателей, остальное на странице сервиса.
-    const entries = Object.entries(s.stats || {}).filter(([k]) => k !== "ok");
+    // pendingModeration тоже исключаем — оно уже показано отдельным бейджем
+    // чуть ниже (pendingBadge), иначе то же число дублировалось бы ещё и
+    // голой строкой статистики.
+    const entries = Object.entries(s.stats || {}).filter(([k]) => k !== "ok" && k !== "pendingModeration");
     const rows = entries.slice(0, 5).map(([k, v]) =>
       `<div class="bh-stat-row"><span>${escapeHtml(k)}</span><b>${v === null || v === undefined ? "—" : escapeHtml(String(v))}</b></div>`
     ).join("");
@@ -279,7 +303,7 @@
     // stats (сейчас только Puzzle); у остальных поля просто нет, и бейдж не
     // рисуется — тот же принцип opt-in, что у вкладки «Модерация» ниже.
     const pending = Number(s.stats?.pendingModeration) || 0;
-    const pendingBadge = pending ? ` <span class="bh-badge warn">${pending} на модерации</span>` : "";
+    const pendingBadge = pending ? ` <span class="bh-badge warn dot" title="${pending} на модерации">${pending}</span>` : "";
     return `<a class="bh-card" href="#service/${encodeURIComponent(s.id)}">
       <h3><span class="bh-dot ok"></span>${escapeHtml(s.name)}${pendingBadge}</h3>
       ${rows || '<div class="bh-stat-row"><span>—</span></div>'}${more}
@@ -316,7 +340,7 @@
     try {
       data = await api(`/api/metrics?days=${metricsDays}`);
     } catch (e) {
-      el.innerHTML = `<div class="bh-empty">Не удалось загрузить: ${escapeHtml(e.message)}</div>`;
+      el.innerHTML = `<div class="bh-empty error">Не удалось загрузить: ${escapeHtml(e.message)}</div>`;
       return;
     }
     if (!data.services.length) { el.innerHTML = `<div class="bh-empty">Сервисы не настроены (SERVICES_JSON)</div>`; return; }
@@ -403,6 +427,36 @@
   const LOG_RANK = { info: 0, warn: 1, error: 2 };
 
   const DETAIL_TAB_LABELS = { rooms: "Комнаты", library: "Библиотека", import: "Импорт", moderation: "Модерация", feedback: "Обратная связь", logs: "Логи" };
+  // Какие сервисы реально поддерживают вкладку — те же условия, что и в
+  // ветках renderServiceDetail ниже (library: Movies/Puzzle, import/
+  // moderation/feedback: только Puzzle), просто вынесенные наверх, чтобы
+  // таб-бар не показывал вкладки-заглушки для сервисов, которым они не
+  // подходят. «Комнаты» намеренно не фильтруются тут: поддержка проверяется
+  // не по id, а по тому, ответит ли /internal/rooms (см. loadRooms) — так
+  // сервис может завести комнаты позже без правки этого списка.
+  const TAB_SUPPORTED = {
+    rooms: () => true,
+    library: id => id === "movies" || id === "puzzle",
+    import: id => id === "puzzle",
+    moderation: id => id === "puzzle",
+    feedback: id => id === "puzzle",
+    logs: () => true,
+  };
+
+  /** Точечно обновляет бейдж «N на модерации» у вкладки «Модерация» текущей
+      страницы сервиса — вызывается сразу после approve/reject/delete внутри
+      самих очередей (wireModerationQueue/wireRoomUploadQueue/
+      wireCategoryModerationQueue), чтобы число не ждало следующего тика
+      moderationPollTimer. Молча ничего не делает, если бейджа сейчас нет на
+      экране (ушли со страницы, или сервис не поддерживает вкладку). */
+  async function refreshModerationBadge(id) {
+    const tabLink = document.querySelector('#detailTabs a[href$="/moderation"]');
+    if (!tabLink) return;
+    let fresh;
+    try { fresh = await api(`/api/services/${encodeURIComponent(id)}/stats`); } catch { return; }
+    const n = Number(fresh.stats?.pendingModeration) || 0;
+    tabLink.innerHTML = `${DETAIL_TAB_LABELS.moderation}${n ? ` <span class="bh-badge warn dot" title="${n} на модерации">${n}</span>` : ""}`;
+  }
 
   /** Подробности сервиса теперь на подвкладках (#service/<id>/<tab>) — у
       Movies под «Библиотекой» скопилось пять разных инструментов (скан,
@@ -416,7 +470,7 @@
     try {
       s = await api(`/api/services/${encodeURIComponent(id)}/stats`);
     } catch (e) {
-      body.innerHTML = `<a class="bh-back" href="#overview">← Обзор</a><div class="bh-empty">Не удалось загрузить: ${escapeHtml(e.message)}</div>`;
+      body.innerHTML = `<a class="bh-back" href="#overview">← Обзор</a><div class="bh-empty error">Не удалось загрузить: ${escapeHtml(e.message)}</div>`;
       return;
     }
 
@@ -433,11 +487,27 @@
       </div>
       ${s.ok ? statsAndChartHtml(s.stats) : `<div class="bh-empty">Сервис недоступен: ${escapeHtml(s.error || "")}</div>`}
 
-      <div class="bh-tabs bh-subtabs">
-        ${DETAIL_TABS.map(t => `<a class="bh-tab ${t === tab ? "is-active" : ""}" href="#service/${encodeURIComponent(id)}/${t}">${DETAIL_TAB_LABELS[t]}${t === "moderation" && pendingModeration ? ` <span class="bh-badge warn">${pendingModeration}</span>` : ""}</a>`).join("")}
+      <div class="bh-tabs bh-subtabs" id="detailTabs">
+        ${DETAIL_TABS.filter(t => TAB_SUPPORTED[t](id)).map(t => `<a class="bh-tab ${t === tab ? "is-active" : ""}" href="#service/${encodeURIComponent(id)}/${t}">${DETAIL_TAB_LABELS[t]}${t === "moderation" && pendingModeration ? ` <span class="bh-badge warn dot" title="${pendingModeration} на модерации">${pendingModeration}</span>` : ""}</a>`).join("")}
       </div>
       <div id="detailTabBody"></div>
     `;
+
+    // Бейдж «N на модерации» у самой вкладки — точечно обновляем только его,
+    // не всю страницу целиком: полный ререндер сбросил бы то, что админ уже
+    // делает на текущей вкладке (набранный запрос в «Импорте», отмеченные
+    // чекбоксы в очереди и т.п.). См. moderationPollTimer на «Обзоре» — тот
+    // же принцип, тут просто другая цель патча.
+    if (TAB_SUPPORTED.moderation(id)) {
+      moderationPollTimer = setInterval(async () => {
+        const tabLink = document.querySelector('#detailTabs a[href$="/moderation"]');
+        if (!tabLink) return; // ушли со страницы сервиса, пока ждали интервал
+        let fresh;
+        try { fresh = await api(`/api/services/${encodeURIComponent(id)}/stats`); } catch { return; }
+        const n = Number(fresh.stats?.pendingModeration) || 0;
+        tabLink.innerHTML = `${DETAIL_TAB_LABELS.moderation}${n ? ` <span class="bh-badge warn dot" title="${n} на модерации">${n}</span>` : ""}`;
+      }, MODERATION_POLL_MS);
+    }
 
     const tabBody = document.getElementById("detailTabBody");
     if (tab === "rooms") {
@@ -531,8 +601,11 @@
 
   /** Числовые показатели — горизонтальным графиком, остальное (строки, null) — списком. */
   function statsAndChartHtml(stats) {
-    const numeric = Object.entries(stats).filter(([k, v]) => k !== "ok" && typeof v === "number");
-    const rest = Object.entries(stats).filter(([k, v]) => k !== "ok" && typeof v !== "number");
+    // pendingModeration исключаем тут же, что и в cardHtml на «Обзоре» — уже
+    // показано бейджем на вкладке «Модерация», не нужно ещё и полоской в
+    // общем графике статистики сервиса.
+    const numeric = Object.entries(stats).filter(([k, v]) => k !== "ok" && k !== "pendingModeration" && typeof v === "number");
+    const rest = Object.entries(stats).filter(([k, v]) => k !== "ok" && k !== "pendingModeration" && typeof v !== "number");
     const max = Math.max(1, ...numeric.map(([, v]) => v));
 
     const chart = numeric.length ? `<div class="bh-chart">${numeric.map(([k, v]) => `
@@ -567,10 +640,10 @@
           <td>${new Date(r.createdAt).toLocaleDateString("ru-RU")}</td>
         </tr>`).join("");
       el.innerHTML = `
-        <table class="bh-table">
+        <div class="bh-table-wrap"><table class="bh-table">
           <thead><tr><th>Название</th><th>Направление</th><th>Статус</th><th>Участники</th><th>Мест</th><th>Код</th><th>Создана</th></tr></thead>
           <tbody>${rows}</tbody>
-        </table>`;
+        </table></div>`;
     } catch {
       // Обычно значит, что у сервиса просто нет /internal/rooms (пока — только у Trip).
       el.innerHTML = `<div class="bh-empty">Не поддерживается этим сервисом</div>`;
@@ -596,12 +669,12 @@
           <td>${new Date(f.createdAt).toLocaleString("ru-RU")}</td>
         </tr>`).join("");
       el.innerHTML = `
-        <table class="bh-table">
+        <div class="bh-table-wrap"><table class="bh-table">
           <thead><tr><th>Сообщение</th><th>Контакт</th><th>От кого</th><th>Страница</th><th>Когда</th></tr></thead>
           <tbody>${rows}</tbody>
-        </table>`;
+        </table></div>`;
     } catch (e) {
-      el.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+      el.innerHTML = `<div class="bh-empty error">${escapeHtml(e.message)}</div>`;
     }
   }
 
@@ -797,7 +870,7 @@
       try {
         data = await api(`/api/services/${encodeURIComponent(id)}/movies/${kpId}`);
       } catch (e) {
-        resultEl.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+        resultEl.innerHTML = `<div class="bh-empty error">${escapeHtml(e.message)}</div>`;
         return;
       }
       const u = data.usage || { rooms: 0, marks: 0, personalList: 0 };
@@ -849,13 +922,13 @@
       try {
         data = await api(`/api/services/${encodeURIComponent(id)}/collections`);
       } catch (e) {
-        listBox.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+        listBox.innerHTML = `<div class="bh-empty error">${escapeHtml(e.message)}</div>`;
         return;
       }
       const rows = data.collections || [];
       if (!rows.length) { listBox.innerHTML = `<div class="bh-empty">Пока ничего не импортировано</div>`; return; }
       listBox.innerHTML = `
-        <table class="bh-table">
+        <div class="bh-table-wrap"><table class="bh-table">
           <thead><tr><th>Название</th><th>Slug</th><th>Источник</th><th>Фильмов</th><th>Обновлено</th><th></th></tr></thead>
           <tbody>${rows.map(c => `
             <tr data-id="${escapeHtml(c.id)}">
@@ -866,7 +939,7 @@
               <td>${new Date(c.updatedAt).toLocaleDateString("ru-RU")}</td>
               <td><button class="bh-btn danger" data-action="delete">Удалить</button></td>
             </tr>`).join("")}</tbody>
-        </table>`;
+        </table></div>`;
       listBox.querySelectorAll("button[data-action='delete']").forEach(btn => {
         btn.onclick = async () => {
           const tr = btn.closest("tr");
@@ -900,7 +973,7 @@
         document.getElementById("collectionImportSlug").value = "";
         await loadList();
       } catch (e) {
-        resultEl.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+        resultEl.innerHTML = `<div class="bh-empty error">${escapeHtml(e.message)}</div>`;
       }
     };
 
@@ -957,7 +1030,7 @@
             <div class="bh-stat-row"><span>Поставлено в очередь докачки</span><b>${data.queued}</b></div>
           </div>`;
       } catch (e) {
-        resultEl.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+        resultEl.innerHTML = `<div class="bh-empty error">${escapeHtml(e.message)}</div>`;
       }
     };
   }
@@ -984,9 +1057,9 @@
     el.innerHTML = `
       <div class="bh-section-title">Категории</div>
       <div class="bh-toolbar">
-        <input type="text" class="bh-input-narrow" id="categoryCreateName" placeholder="Название категории (люди видят это)">
-        <input type="text" class="bh-input-narrow" id="categoryCreateSlug" placeholder="Алиас — необязательно (в пути, напр. cats)" style="width:14em">
-        <input type="text" class="bh-input-narrow" id="categoryCreateNameEn" placeholder="English name — необязательно" style="width:14em">
+        <input type="text" id="categoryCreateName" placeholder="Название категории (люди видят это)" style="flex:2 1 16rem">
+        <input type="text" id="categoryCreateSlug" placeholder="Алиас — необязательно (в пути, напр. cats)" style="flex:1 1 12rem">
+        <input type="text" id="categoryCreateNameEn" placeholder="English name — необязательно" style="flex:1 1 12rem">
         <button class="bh-btn" id="categoryCreateBtn">Создать</button>
       </div>
       <div id="categoryListBox"></div>
@@ -1060,7 +1133,7 @@
       try {
         data = await api(`/api/services/${encodeURIComponent(id)}/categories`);
       } catch (e) {
-        categoryListBox.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+        categoryListBox.innerHTML = `<div class="bh-empty error">${escapeHtml(e.message)}</div>`;
         return;
       }
       categories = data.categories || [];
@@ -1209,7 +1282,7 @@
       updateBulkActionsBar();
       if (!rows.length) { listBox.innerHTML = `<div class="bh-empty">${allPuzzles.length ? "Ничего не подходит под фильтр" : "Пока ничего не добавлено"}</div>`; return; }
       listBox.innerHTML = `
-        <table class="bh-table">
+        <div class="bh-table-wrap"><table class="bh-table">
           <thead><tr><th><input type="checkbox" id="puzzleSelectAll" title="Отметить все"></th><th></th><th>Название</th><th>Категория</th><th>Вариантов</th><th>Добавлено</th><th></th></tr></thead>
           <tbody>${rows.map(p => `
             <tr data-id="${escapeHtml(p.id)}">
@@ -1222,12 +1295,12 @@
               <td>${p.variants}</td>
               <td>${new Date(p.createdAt).toLocaleDateString("ru-RU")}</td>
               <td class="bh-toolbar" style="margin:0">
-                <button class="bh-btn" data-action="suggest" title="Предложить название через GigaChat">✨</button>
+                <button class="bh-btn" data-action="suggest" title="Предложить название через GigaChat"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M12 3v5M12 16v5M3 12h5M16 12h5M6 6l2.5 2.5M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18"/></svg></button>
                 <button class="bh-btn" data-action="save">Сохранить</button>
                 <button class="bh-btn danger" data-action="delete">Удалить</button>
               </td>
             </tr>`).join("")}</tbody>
-        </table>`;
+        </table></div>`;
       // Клик по миниатюре — модалка с редактированием прямо там (см.
       // openPuzzleEditModal выше): 48px в таблице мало, чтобы разглядеть
       // картинку, особенно после массового импорта с Pexels, а раз уже
@@ -1443,7 +1516,7 @@
       const ok = results.filter(r => !r.error);
       const failed = results.filter(r => r.error);
       bulkGigaResultEl.innerHTML = `
-        <table class="bh-table">
+        <div class="bh-table-wrap"><table class="bh-table">
           <thead><tr><th></th><th>Было</th><th>Стало (RU)</th><th>Стало (EN)</th></tr></thead>
           <tbody>${ok.map(r => `
             <tr data-pid="${escapeHtml(r.pid)}">
@@ -1455,7 +1528,7 @@
           ${failed.map(r => `
             <tr><td></td><td>${escapeHtml(r.oldTitle)}</td><td colspan="2" style="color:var(--danger)">Ошибка: ${escapeHtml(r.error)}</td></tr>`).join("")}
           </tbody>
-        </table>
+        </table></div>
         <div class="bh-toolbar">
           <button class="bh-btn" id="bulkGigaApplyBtn">Применить отмеченные</button>
           <button class="bh-btn" id="bulkGigaCancelBtn">Отмена</button>
@@ -1550,7 +1623,7 @@
       try {
         data = await api(`/api/services/${encodeURIComponent(id)}/puzzles`);
       } catch (e) {
-        listBox.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+        listBox.innerHTML = `<div class="bh-empty error">${escapeHtml(e.message)}</div>`;
         return;
       }
       allPuzzles = data.puzzles || [];
@@ -1632,7 +1705,7 @@
         fileInput.value = "";
         await loadList();
       } catch (e) {
-        resultEl.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+        resultEl.innerHTML = `<div class="bh-empty error">${escapeHtml(e.message)}</div>`;
       }
     };
 
@@ -1661,7 +1734,7 @@
       <div id="pexelsCategories"><div class="bh-empty">Загрузка…</div></div>
       <div id="pexelsResults"><div class="bh-empty">Введите запрос и нажмите «Искать»</div></div>
       <div id="pexelsPager"></div>
-      <div class="bh-toolbar">
+      <div class="bh-toolbar" id="pexelsImportBar" hidden>
         <button class="bh-btn" id="pexelsImportBtn" disabled>Импортировать выбранные (0)</button>
       </div>
       <div id="pexelsImportResult"></div>
@@ -1670,6 +1743,7 @@
     const rateLimitEl = document.getElementById("pexelsRateLimit");
     const resultsEl = document.getElementById("pexelsResults");
     const pagerEl = document.getElementById("pexelsPager");
+    const importBar = document.getElementById("pexelsImportBar");
     const importBtn = document.getElementById("pexelsImportBtn");
     const importResultEl = document.getElementById("pexelsImportResult");
     let photos = []; // последний результат поиска — для сопоставления с чекбоксами при импорте
@@ -1680,7 +1754,7 @@
       try {
         data = await api(`/api/services/${encodeURIComponent(id)}/categories`);
       } catch (e) {
-        categoriesBox.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+        categoriesBox.innerHTML = `<div class="bh-empty error">${escapeHtml(e.message)}</div>`;
         return;
       }
       categories = data.categories || [];
@@ -1719,10 +1793,12 @@
         photos = data.photos || [];
         renderRateLimit(data.rateLimit);
       } catch (e) {
-        resultsEl.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+        importBar.hidden = true;
+        resultsEl.innerHTML = `<div class="bh-empty error">${escapeHtml(e.message)}</div>`;
         return;
       }
-      if (!photos.length) { resultsEl.innerHTML = `<div class="bh-empty">Ничего не нашлось</div>`; return; }
+      if (!photos.length) { importBar.hidden = true; resultsEl.innerHTML = `<div class="bh-empty">Ничего не нашлось</div>`; return; }
+      importBar.hidden = false;
       resultsEl.innerHTML = `<div class="bh-photo-grid">${photos.map(ph => `
         <label class="bh-photo-cell">
           <input type="checkbox" value="${escapeHtml(String(ph.id))}" hidden>
@@ -1881,13 +1957,13 @@
       try {
         data = await api(`/api/services/${encodeURIComponent(id)}/moderation/room-uploads`);
       } catch (e) {
-        el.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+        el.innerHTML = `<div class="bh-empty error">${escapeHtml(e.message)}</div>`;
         return;
       }
       const rows = data.photos || [];
       if (!rows.length) { el.innerHTML = `<div class="bh-empty">Нечего проверять</div>`; return; }
       el.innerHTML = `
-        <table class="bh-table">
+        <div class="bh-table-wrap"><table class="bh-table">
           <thead><tr><th></th><th>Название</th><th>Загрузил</th><th>Комната</th><th>Загружено</th><th></th></tr></thead>
           <tbody>${rows.map(p => `
             <tr data-id="${escapeHtml(p.id)}" data-owner="${escapeHtml(p.ownerUserId || "")}" data-device="${escapeHtml(p.uploadDevice || "")}">
@@ -1898,11 +1974,11 @@
               <td>${new Date(p.createdAt).toLocaleDateString("ru-RU")}</td>
               <td class="bh-toolbar" style="margin:0">
                 <button class="bh-btn" data-action="approve">Одобрить</button>
-                <button class="bh-btn danger" data-action="reject">Отклонить</button>
+                <button class="bh-btn" data-action="reject">Отклонить</button>
                 <button class="bh-btn danger" data-action="ban">Забанить</button>
               </td>
             </tr>`).join("")}</tbody>
-        </table>`;
+        </table></div>`;
 
       el.querySelectorAll("tr[data-id]").forEach(tr => {
         const photoId = tr.dataset.id, ownerUserId = tr.dataset.owner, deviceId = tr.dataset.device;
@@ -1922,7 +1998,7 @@
 
         btn("approve").onclick = async () => {
           setBusy(true);
-          try { await api(`/api/services/${encodeURIComponent(id)}/moderation/room-uploads/${encodeURIComponent(photoId)}/approve`, { method: "POST" }); await load(); }
+          try { await api(`/api/services/${encodeURIComponent(id)}/moderation/room-uploads/${encodeURIComponent(photoId)}/approve`, { method: "POST" }); await load(); refreshModerationBadge(id); }
           catch (e) { alert("Не получилось: " + e.message); setBusy(false); }
         };
         btn("reject").onclick = async () => {
@@ -1934,6 +2010,7 @@
               method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }),
             });
             await load();
+            refreshModerationBadge(id);
           } catch (e) { alert("Не получилось: " + e.message); setBusy(false); }
         };
         // Та же общая кнопка «Забанить» (аккаунт+устройство разом), что и в
@@ -1986,13 +2063,13 @@
       try {
         data = await api(`/api/services/${encodeURIComponent(id)}/moderation/photos`);
       } catch (e) {
-        el.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+        el.innerHTML = `<div class="bh-empty error">${escapeHtml(e.message)}</div>`;
         return;
       }
       const rows = data.photos || [];
       if (!rows.length) { el.innerHTML = `<div class="bh-empty">Пока никто ничего не загружал</div>`; return; }
       el.innerHTML = `
-        <table class="bh-table">
+        <div class="bh-table-wrap"><table class="bh-table">
           <thead><tr><th></th><th>Название</th><th>Загрузил</th><th>Комната</th><th>Статус</th><th>Загружено</th><th></th></tr></thead>
           <tbody>${rows.map(p => `
             <tr data-id="${escapeHtml(p.id)}" data-owner="${escapeHtml(p.ownerUserId || "")}" data-device="${escapeHtml(p.uploadDevice || "")}">
@@ -2005,13 +2082,13 @@
               <td class="bh-toolbar" style="margin:0">
                 ${p.moderationStatus === "pending" ? `
                   <button class="bh-btn" data-action="approve">Одобрить</button>
-                  <button class="bh-btn danger" data-action="reject">Отклонить</button>
+                  <button class="bh-btn" data-action="reject">Отклонить</button>
                 ` : ""}
                 <button class="bh-btn danger" data-action="delete">Удалить</button>
                 <button class="bh-btn danger" data-action="ban">Забанить</button>
               </td>
             </tr>`).join("")}</tbody>
-        </table>`;
+        </table></div>`;
 
       el.querySelectorAll("tr[data-id]").forEach(tr => {
         const photoId = tr.dataset.id, ownerUserId = tr.dataset.owner, deviceId = tr.dataset.device;
@@ -2035,7 +2112,7 @@
         if (btn("approve")) btn("approve").onclick = async () => {
           if (!confirm(`Опубликовать «${title}» в общую библиотеку без входа?`)) return;
           setBusy(true);
-          try { await api(`/api/services/${encodeURIComponent(id)}/moderation/photos/${encodeURIComponent(photoId)}/approve`, { method: "POST" }); await load(); }
+          try { await api(`/api/services/${encodeURIComponent(id)}/moderation/photos/${encodeURIComponent(photoId)}/approve`, { method: "POST" }); await load(); refreshModerationBadge(id); }
           catch (e) { alert("Не получилось: " + e.message); setBusy(false); }
         };
         if (btn("reject")) btn("reject").onclick = async () => {
@@ -2047,12 +2124,13 @@
               method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }),
             });
             await load();
+            refreshModerationBadge(id);
           } catch (e) { alert("Не получилось: " + e.message); setBusy(false); }
         };
         btn("delete").onclick = async () => {
           if (!confirm(`Удалить «${title}» безвозвратно? Сработает, даже если пазл уже собирали в комнате.`)) return;
           setBusy(true);
-          try { await api(`/api/services/${encodeURIComponent(id)}/moderation/photos/${encodeURIComponent(photoId)}`, { method: "DELETE" }); await load(); }
+          try { await api(`/api/services/${encodeURIComponent(id)}/moderation/photos/${encodeURIComponent(photoId)}`, { method: "DELETE" }); await load(); refreshModerationBadge(id); }
           catch (e) { alert("Не получилось: " + e.message); setBusy(false); }
         };
         // Аккаунт и устройство банятся одной кнопкой: цель у обоих одна — не
@@ -2107,13 +2185,13 @@
       try {
         data = await api(`/api/services/${encodeURIComponent(id)}/moderation/categories`);
       } catch (e) {
-        el.innerHTML = `<div class="bh-empty">${escapeHtml(e.message)}</div>`;
+        el.innerHTML = `<div class="bh-empty error">${escapeHtml(e.message)}</div>`;
         return;
       }
       const rows = data.categories || [];
       if (!rows.length) { el.innerHTML = `<div class="bh-empty">Нет категорий на модерации</div>`; return; }
       el.innerHTML = `
-        <table class="bh-table">
+        <div class="bh-table-wrap"><table class="bh-table">
           <thead><tr><th>Название</th><th>Алиас</th><th>Предложил</th><th>Когда</th><th></th></tr></thead>
           <tbody>${rows.map(c => `
             <tr data-id="${escapeHtml(c.id)}" data-slug="${escapeHtml(c.slug || "")}">
@@ -2123,10 +2201,10 @@
               <td>${new Date(c.createdAt).toLocaleDateString("ru-RU")}</td>
               <td class="bh-toolbar" style="margin:0">
                 <button class="bh-btn" data-action="approve">Одобрить</button>
-                <button class="bh-btn danger" data-action="reject">Отклонить</button>
+                <button class="bh-btn" data-action="reject">Отклонить</button>
               </td>
             </tr>`).join("")}</tbody>
-        </table>`;
+        </table></div>`;
       el.querySelectorAll("tr[data-id]").forEach(tr => {
         const categoryId = tr.dataset.id;
         const name = tr.children[0].textContent;
@@ -2145,6 +2223,7 @@
               method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(slug.trim() ? { slug: slug.trim() } : {}),
             });
             await load();
+            refreshModerationBadge(id);
           }
           catch (e) { alert("Не получилось: " + e.message); setBusy(false); }
         };
@@ -2157,6 +2236,7 @@
               method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }),
             });
             await load();
+            refreshModerationBadge(id);
           } catch (e) { alert("Не получилось: " + e.message); setBusy(false); }
         };
       });
@@ -2185,7 +2265,7 @@
         if (lvlSel.value) logs = logs.filter(l => LOG_RANK[l.level] >= LOG_RANK[lvlSel.value]);
         list.innerHTML = logs.length ? logs.map(logLineHtml).join("") : `<div class="bh-empty">Пусто</div>`;
       } catch (e) {
-        list.innerHTML = `<div class="bh-empty">Ошибка: ${escapeHtml(e.message)}</div>`;
+        list.innerHTML = `<div class="bh-empty error">Ошибка: ${escapeHtml(e.message)}</div>`;
       }
     }
     // Автообновление — тот же принцип, что и в wireLibraryScan: один общий
@@ -2223,7 +2303,7 @@
       </tr>`).join("");
 
     body.innerHTML = rows
-      ? `<table class="bh-table"><thead><tr><th>Логин</th><th>Почта</th><th>Статус</th><th>Регистрация</th><th>Активность</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+      ? `<div class="bh-table-wrap"><table class="bh-table"><thead><tr><th>Логин</th><th>Почта</th><th>Статус</th><th>Регистрация</th><th>Активность</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
       : `<div class="bh-empty">Пользователей нет</div>`;
 
     // Удаление безвозвратно и задевает данные во всех сервисах сразу — обычного

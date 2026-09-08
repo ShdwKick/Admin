@@ -72,10 +72,14 @@ body{
 
 main{ flex:1; padding:1rem 1.5rem 3rem; max-width:72rem; margin:0 auto; width:100%; }
 
-.bh-tabs{ display:flex; gap:.25rem; margin-bottom:1.5rem; border-bottom:1px solid var(--card-border); }
+/* flex-wrap:nowrap + overflow-x:auto — при большом числе вкладок (у Puzzle
+   их шесть, с «Обратная связь») строка скроллится сама, а не переносит
+   лейбл на две строки: перенос ломал высоту таб-бара и съезжала рамка
+   активной вкладки (border-bottom). */
+.bh-tabs{ display:flex; flex-wrap:nowrap; overflow-x:auto; gap:.25rem; margin-bottom:1.5rem; border-bottom:1px solid var(--card-border); }
 .bh-tab{
   all:unset; cursor:pointer; padding:.6rem 1rem; color:var(--ink-dim);
-  border-bottom:2px solid transparent; font-size:.92rem;
+  border-bottom:2px solid transparent; font-size:.92rem; white-space:nowrap; flex:none;
 }
 .bh-tab:hover{ color:var(--ink); }
 .bh-tab.is-active{ color:var(--ink); border-bottom-color:var(--flame-tip); }
@@ -182,7 +186,25 @@ button.bh-btn:disabled{ opacity:.5; cursor:default; }
 /* Выбранный диапазон на вкладке «Метрики» (см. renderMetrics в app.js) —
    тот же приём выделения, что .bh-tab.is-active, просто на кнопке-таблетке. */
 button.bh-btn.is-active{ background:var(--flame-base); color:#fff; border-color:var(--flame-base); }
+/* Нативная кнопка «Выберите файл» (input[type="file"], см. #puzzleUploadFile
+   в wirePuzzleLibrary) в браузерном стиле по умолчанию почти не заметна
+   рядом с обычными .bh-btn — тот же вид через ::file-selector-button,
+   стандартный псевдоэлемент (Chrome/Edge/Safari/Firefox), а не замена на
+   свою обёртку (input[type=file] капризен со своим label/hidden-инпутом,
+   тут это не окупается ради одного поля). */
+input[type="file"]{ font:inherit; font-size:.85rem; color:var(--ink-dim); }
+input[type="file"]::file-selector-button{
+  all:unset; cursor:pointer; padding:.4rem .8rem; border-radius:.5rem; font-size:.85rem;
+  background:color-mix(in srgb, var(--flame-tip) 16%, transparent); color:var(--ink);
+  border:1px solid var(--card-border); margin-right:.6rem;
+}
+input[type="file"]::file-selector-button:hover{ background:color-mix(in srgb, var(--flame-tip) 26%, transparent); }
 
+/* Обёртка вокруг каждой table.bh-table — при большом числе колонок (особенно
+   в «Библиотеке», где в строке чекбокс+миниатюра+название+категория+…+кнопки)
+   таблица шире вьюпорта; без обёртки это распирало саму страницу по
+   горизонтали. Скроллится сама таблица, шапка и вкладки остаются на месте. */
+.bh-table-wrap{ overflow-x:auto; }
 table.bh-table{ width:100%; border-collapse:collapse; font-size:.88rem; }
 table.bh-table th{ text-align:left; color:var(--ink-dim); font-weight:500; padding:.5rem .6rem; border-bottom:1px solid var(--card-border); }
 table.bh-table td{ padding:.5rem .6rem; border-bottom:1px solid color-mix(in srgb, var(--card-border) 60%, transparent); vertical-align:middle; }
@@ -203,6 +225,15 @@ table.bh-table tr.bh-giga-preview td{ background:color-mix(in srgb, var(--warn) 
    и рядом с обычными строками статистики бейдж должен цепляться взглядом
    первым, а не потеряться среди чисел. */
 .bh-badge.warn{ color:#1a1400; background:var(--warn); border-color:var(--warn); font-weight:600; }
+/* .dot — кружок с одной цифрой вместо бейджа с текстом («N на модерации» в
+   узкой карточке на «Обзоре» переносился на две строки и выглядел грузно).
+   min-width вместо width — на двузначных числах не сплющивается в овал, а
+   тянется в капсулу, как обычный счётчик уведомлений. */
+.bh-badge.dot{
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:1.3rem; height:1.3rem; padding:0 .3rem; border-radius:999px;
+  font-size:.72rem; line-height:1;
+}
 .bh-badge.pending{ color:var(--flame-tip); border-color:color-mix(in srgb, var(--flame-tip) 50%, transparent); }
 .bh-badge.rejected{ color:var(--danger); border-color:color-mix(in srgb, var(--danger) 50%, transparent); }
 
@@ -216,6 +247,11 @@ table.bh-table tr.bh-giga-preview td{ background:color-mix(in srgb, var(--warn) 
 .bh-logline .msg{ flex:1; word-break:break-word; }
 
 .bh-empty{ color:var(--ink-dim); font-size:.9rem; padding:2rem 0; text-align:center; }
+/* .error — реальный сбой запроса (пойманный catch с e.message), а не «тут
+   правда пусто»/«загрузка»/«не поддерживается». Раньше выглядели одинаково
+   приглушённо-серым, и HTTP 404 от отвалившегося сервиса было не отличить
+   от нормального «Пусто» с одного взгляда. */
+.bh-empty.error{ color:var(--danger); }
 
 .bh-gate{
   display:flex; align-items:center; justify-content:center; flex:1; text-align:center;
