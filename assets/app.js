@@ -274,8 +274,14 @@
       `<div class="bh-stat-row"><span>${escapeHtml(k)}</span><b>${v === null || v === undefined ? "—" : escapeHtml(String(v))}</b></div>`
     ).join("");
     const more = entries.length > 5 ? `<div class="bh-stat-row"><span>ещё ${entries.length - 5}…</span></div>` : "";
+    // Бейдж «N на модерации» (см. правку «Уведомления о модерации в
+    // Admin») — сервис сам решает, класть ли pendingModeration в /internal/
+    // stats (сейчас только Puzzle); у остальных поля просто нет, и бейдж не
+    // рисуется — тот же принцип opt-in, что у вкладки «Модерация» ниже.
+    const pending = Number(s.stats?.pendingModeration) || 0;
+    const pendingBadge = pending ? ` <span class="bh-badge warn">${pending} на модерации</span>` : "";
     return `<a class="bh-card" href="#service/${encodeURIComponent(s.id)}">
-      <h3><span class="bh-dot ok"></span>${escapeHtml(s.name)}</h3>
+      <h3><span class="bh-dot ok"></span>${escapeHtml(s.name)}${pendingBadge}</h3>
       ${rows || '<div class="bh-stat-row"><span>—</span></div>'}${more}
     </a>`;
   }
@@ -414,6 +420,11 @@
       return;
     }
 
+    // Бейдж «N на модерации» (см. правку «Уведомления о модерации в
+    // Admin») — на вкладке «Модерация», не только на карточке в обзоре:
+    // сюда заходят и напрямую по ссылке, минуя обзор, бейдж должен быть
+    // виден в обоих местах независимо.
+    const pendingModeration = Number(s.stats?.pendingModeration) || 0;
     body.innerHTML = `
       <a class="bh-back" href="#overview">← Обзор</a>
       <div class="bh-detail-head">
@@ -423,7 +434,7 @@
       ${s.ok ? statsAndChartHtml(s.stats) : `<div class="bh-empty">Сервис недоступен: ${escapeHtml(s.error || "")}</div>`}
 
       <div class="bh-tabs bh-subtabs">
-        ${DETAIL_TABS.map(t => `<a class="bh-tab ${t === tab ? "is-active" : ""}" href="#service/${encodeURIComponent(id)}/${t}">${DETAIL_TAB_LABELS[t]}</a>`).join("")}
+        ${DETAIL_TABS.map(t => `<a class="bh-tab ${t === tab ? "is-active" : ""}" href="#service/${encodeURIComponent(id)}/${t}">${DETAIL_TAB_LABELS[t]}${t === "moderation" && pendingModeration ? ` <span class="bh-badge warn">${pendingModeration}</span>` : ""}</a>`).join("")}
       </div>
       <div id="detailTabBody"></div>
     `;
@@ -1532,7 +1543,13 @@
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               importUrl: photo.importUrl, width: photo.width, height: photo.height,
-              title, categoryId,
+              // pexelsAlt (не title) — сырой alt с Pexels, ДАЖЕ пустой:
+              // это сигнал Puzzle попробовать придумать короткое название
+              // через GigaChat (текстом, если alt есть, иначе по самой
+              // фотографии, см. правку «Короткие названия пазлов»). title
+              // выше — прежняя болванка, страховка на случай, если GigaChat
+              // не настроен или откажет.
+              title, categoryId, pexelsAlt: photo.alt.trim(),
             }),
           });
           done++;

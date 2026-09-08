@@ -724,14 +724,19 @@ const server = http.createServer(async (req, res) => {
         const service = SERVICES.find(s => s.id === pexelsImportMatch[1]);
         if (!service) return json(res, 404, { error: "unknown_service" });
         const body = await readJsonBody(req);
-        const { importUrl, width, height, title, categoryId } = body || {};
+        const { importUrl, width, height, title, categoryId, pexelsAlt } = body || {};
         if (!importUrl || !title) return json(res, 400, { error: "missing_fields" });
         try {
           const imgRes = await fetch(importUrl, { signal: AbortSignal.timeout(20000) });
           if (!imgRes.ok) return json(res, 502, { error: "pexels", message: `Не удалось скачать фото с Pexels: HTTP ${imgRes.status}` });
           const imageBase64 = Buffer.from(await imgRes.arrayBuffer()).toString("base64");
+          // pexelsAlt (пустая строка — валидное значение, значит у фото
+          // вообще нет alt-текста) — сигнал Puzzle попробовать придумать
+          // короткое название через GigaChat (см. правку «Короткие названия
+          // пазлов», Puzzle server.js). title остаётся прежней болванкой на
+          // случай, если GigaChat не настроен или откажет.
           const data = await callService(service, "/internal/puzzles", {
-            method: "POST", body: { title, imageBase64, width, height, categoryId }, timeout: 20000,
+            method: "POST", body: { title, imageBase64, width, height, categoryId, pexelsAlt }, timeout: 30000,
           });
           logSelf("info", "Admin-действие: импорт картинки с Pexels", { service: service.id, by: admin.username, title });
           return json(res, 200, data);
