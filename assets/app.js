@@ -458,6 +458,34 @@
     tabLink.innerHTML = `${DETAIL_TAB_LABELS.moderation}${n ? ` <span class="bh-badge warn dot" title="${n} на модерации">${n}</span>` : ""}`;
   }
 
+  /** id → объект пользователя Auth (username и т.п.), для модалки фото на
+      модерации (см. openPhotoModal ниже) — там ownerUserId голый UUID, а
+      хочется сразу видеть логин, если фото грузил залогиненный человек, а не
+      анонимно/с устройства без аккаунта. Список пользователей меняется редко,
+      а очередь модерации перезапрашивается на каждое approve/reject — грузим
+      /api/users один раз за сессию вкладки и переиспользуем, а не дёргаем на
+      каждое действие. Молча отдаёт пустую карту при ошибке — имя тут не
+      критично, страница модерации не должна падать из-за него. */
+  let usersMapPromise = null;
+  async function getUsersMap() {
+    if (!usersMapPromise) {
+      usersMapPromise = api("/api/users")
+        .then(d => new Map((d.users || []).map(u => [u.id, u])))
+        .catch(() => new Map());
+    }
+    return usersMapPromise;
+  }
+  /** Строка «Загрузил» в модалке фото — логин, если ownerUserId резолвится
+      в реального пользователя Auth, иначе просто голый UUID (или «—» для
+      анонимной загрузки без аккаунта). */
+  function uploaderFieldHtml(ownerUserId, usersMap) {
+    if (!ownerUserId) return `<code>—</code>`;
+    const u = usersMap.get(ownerUserId);
+    return u
+      ? `${escapeHtml(u.username)} <code>${escapeHtml(ownerUserId)}</code>`
+      : `<code>${escapeHtml(ownerUserId)}</code>`;
+  }
+
   /** Подробности сервиса теперь на подвкладках (#service/<id>/<tab>) — у
       Movies под «Библиотекой» скопилось пять разных инструментов (скан,
       очередь докачки, ключи poiskkino, импорт подборок, удаление фильма),
@@ -1987,14 +2015,16 @@
         const btn = action => tr.querySelector(`button[data-action="${action}"]`);
 
         const photo = rows.find(r => String(r.id) === photoId);
-        tr.querySelector("img").onclick = () => openPhotoModal(photo, baseUrl, tr, [
-          ["Загрузил", `<code>${escapeHtml(photo.ownerUserId || "—")}</code>`],
-          ["Устройство", `<code>${escapeHtml(photo.uploadDevice || "—")}</code>`],
-          ["Комната", escapeHtml(photo.roomTitle || "—")],
-          ["Согласие при загрузке", photo.consentAt ? escapeHtml(new Date(photo.consentAt).toLocaleString("ru-RU")) : "не получено"],
-          ["Вариантов сложности", String(photo.variants)],
-          ["Загружено", escapeHtml(new Date(photo.createdAt).toLocaleString("ru-RU"))],
-        ]);
+        tr.querySelector("img").onclick = async () => {
+          const usersMap = await getUsersMap();
+          openPhotoModal(photo, baseUrl, tr, [
+            ["Загрузил", uploaderFieldHtml(photo.ownerUserId, usersMap)],
+            ["Устройство", `<code>${escapeHtml(photo.uploadDevice || "—")}</code>`],
+            ["Комната", escapeHtml(photo.roomTitle || "—")],
+            ["Согласие при загрузке", photo.consentAt ? escapeHtml(new Date(photo.consentAt).toLocaleString("ru-RU")) : "не получено"],
+            ["Загружено", escapeHtml(new Date(photo.createdAt).toLocaleString("ru-RU"))],
+          ]);
+        };
 
         btn("approve").onclick = async () => {
           setBusy(true);
@@ -2098,16 +2128,18 @@
         const btn = action => tr.querySelector(`button[data-action="${action}"]`);
 
         const photo = rows.find(r => String(r.id) === photoId);
-        tr.querySelector("img").onclick = () => openPhotoModal(photo, baseUrl, tr, [
-          ["Загрузил", `<code>${escapeHtml(photo.ownerUserId || "—")}</code>`],
-          ["Устройство", `<code>${escapeHtml(photo.uploadDevice || "—")}</code>`],
-          ["Комната", escapeHtml(photo.roomTitle || "—")],
-          ["Согласие при загрузке", photo.consentAt ? escapeHtml(new Date(photo.consentAt).toLocaleString("ru-RU")) : "не получено"],
-          ["Вариантов сложности", String(photo.variants)],
-          ["Статус публикации", MODERATION_STATUS_LABEL[photo.moderationStatus] || '<span class="bh-badge">—</span>'],
-          ...(photo.moderationReason ? [["Причина", escapeHtml(photo.moderationReason)]] : []),
-          ["Загружено", escapeHtml(new Date(photo.createdAt).toLocaleString("ru-RU"))],
-        ]);
+        tr.querySelector("img").onclick = async () => {
+          const usersMap = await getUsersMap();
+          openPhotoModal(photo, baseUrl, tr, [
+            ["Загрузил", uploaderFieldHtml(photo.ownerUserId, usersMap)],
+            ["Устройство", `<code>${escapeHtml(photo.uploadDevice || "—")}</code>`],
+            ["Комната", escapeHtml(photo.roomTitle || "—")],
+            ["Согласие при загрузке", photo.consentAt ? escapeHtml(new Date(photo.consentAt).toLocaleString("ru-RU")) : "не получено"],
+            ["Статус публикации", MODERATION_STATUS_LABEL[photo.moderationStatus] || '<span class="bh-badge">—</span>'],
+            ...(photo.moderationReason ? [["Причина", escapeHtml(photo.moderationReason)]] : []),
+            ["Загружено", escapeHtml(new Date(photo.createdAt).toLocaleString("ru-RU"))],
+          ]);
+        };
 
         if (btn("approve")) btn("approve").onclick = async () => {
           if (!confirm(`Опубликовать «${title}» в общую библиотеку без входа?`)) return;
@@ -2289,6 +2321,7 @@
     const rows = (data.users || []).map(u => `
       <tr data-id="${escapeHtml(u.id)}" data-username="${escapeHtml(u.username)}">
         <td>${escapeHtml(u.username)}${u.id === user.id ? ' <span class="bh-badge">это вы</span>' : ""}</td>
+        <td><code>${escapeHtml(u.id)}</code></td>
         <td>${escapeHtml(u.email || "—")}</td>
         <td>${u.admin ? '<span class="bh-badge admin">админ</span>' : ""}${u.disabled ? ' <span class="bh-badge disabled">заблокирован</span>' : ""}</td>
         <td>${u.createdAt ? new Date(u.createdAt).toLocaleDateString("ru-RU") : "—"}</td>
@@ -2303,7 +2336,7 @@
       </tr>`).join("");
 
     body.innerHTML = rows
-      ? `<div class="bh-table-wrap"><table class="bh-table"><thead><tr><th>Логин</th><th>Почта</th><th>Статус</th><th>Регистрация</th><th>Активность</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
+      ? `<div class="bh-table-wrap"><table class="bh-table"><thead><tr><th>Логин</th><th>ID</th><th>Почта</th><th>Статус</th><th>Регистрация</th><th>Активность</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
       : `<div class="bh-empty">Пользователей нет</div>`;
 
     // Удаление безвозвратно и задевает данные во всех сервисах сразу — обычного

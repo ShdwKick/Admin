@@ -267,7 +267,7 @@ table.bh-table tr.bh-giga-preview td{ background:color-mix(in srgb, var(--warn) 
 }
 .bh-modal{
   background:var(--card-bg); border:1px solid var(--card-border); border-radius:1rem;
-  padding:1.25rem; max-width:min(90vw, 48rem); max-height:90vh; overflow:auto;
+  padding:1.25rem; width:min(90vw, 34rem); max-width:min(90vw, 48rem); max-height:90vh; overflow:auto;
   display:flex; flex-direction:column; gap:.9rem;
 }
 .bh-modal-head{ display:flex; align-items:center; justify-content:space-between; gap:1rem; }
@@ -276,6 +276,14 @@ table.bh-table tr.bh-giga-preview td{ background:color-mix(in srgb, var(--warn) 
 .bh-modal-close:hover{ color:var(--ink); }
 .bh-modal img{ max-width:100%; max-height:60vh; object-fit:contain; border-radius:.6rem; display:block; margin:0 auto; background:color-mix(in srgb, #000 30%, transparent); }
 .bh-modal-fields{ display:flex; flex-direction:column; gap:.3rem; }
+/* Строки полей — не .bh-stat-row с justify-content:space-between: на
+   длинных значениях (UUID устройства/пользователя в <code>) метка и
+   значение утыкались друг в друга без зазора вместо переноса. Грид с
+   auto-колонкой под метку отдаёт весь остаток значению и переносит его
+   по символам, а не вылезает за край модалки. */
+.bh-modal-fields .bh-stat-row{ display:grid; grid-template-columns:auto minmax(0,1fr); gap:0 1rem; }
+.bh-modal-fields .bh-stat-row span{ white-space:nowrap; }
+.bh-modal-fields .bh-stat-row b{ text-align:right; word-break:break-all; }
 .bh-modal-thumb{ cursor:zoom-in; }
 
 /* Сетка выбора фото при импорте с Pexels (см. wirePexelsImport в app.js) —
