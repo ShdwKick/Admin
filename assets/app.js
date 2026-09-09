@@ -660,12 +660,45 @@
 
   async function loadRooms(id, baseUrl) {
     const el = document.getElementById("detailRooms");
+    let rooms;
     try {
       const data = await api(`/api/services/${encodeURIComponent(id)}/rooms`);
-      const rooms = data.rooms || [];
-      if (!rooms.length) { el.innerHTML = `<div class="bh-empty">Пусто</div>`; return; }
-      const clickable = ROOM_DETAIL_SUPPORTED(id);
-      const rows = rooms.map(r => `
+      rooms = data.rooms || [];
+    } catch {
+      // Обычно значит, что у сервиса просто нет /internal/rooms (пока — только у Trip).
+      el.innerHTML = `<div class="bh-empty">Не поддерживается этим сервисом</div>`;
+      return;
+    }
+    if (!rooms.length) { el.innerHTML = `<div class="bh-empty">Пусто</div>`; return; }
+
+    const clickable = ROOM_DETAIL_SUPPORTED(id);
+    // Фильтр по статусу — только если у сервиса вообще есть больше одного
+    // статуса среди комнат (у Trip: planning/active/done; у Puzzle status
+    // всегда null, там селект был бы бесполезной заглушкой на единственное
+    // значение «—», тот же принцип, что у скрытия неприменимых вкладок
+    // сервиса выше). Строим из РЕАЛЬНЫХ значений, а не всего словаря
+    // ROOM_STATUS — не показываем статус, которого ни у одной комнаты нет.
+    const statuses = [...new Set(rooms.map(r => r.status).filter(Boolean))];
+    const showStatusFilter = statuses.length > 1;
+
+    el.innerHTML = `
+      <div class="bh-toolbar">
+        <input type="text" id="roomFilterSearch" placeholder="Поиск по названию или коду">
+        ${showStatusFilter ? `
+          <select id="roomFilterStatus">
+            <option value="">Все статусы</option>
+            ${statuses.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(ROOM_STATUS[s] || s)}</option>`).join("")}
+          </select>` : ""}
+      </div>
+      <div id="roomListBox"></div>
+    `;
+    const listBox = document.getElementById("roomListBox");
+    const searchInput = document.getElementById("roomFilterSearch");
+    const statusSelect = document.getElementById("roomFilterStatus");
+
+    function renderRows(list) {
+      if (!list.length) { listBox.innerHTML = `<div class="bh-empty">Ничего не нашлось</div>`; return; }
+      const rows = list.map(r => `
         <tr ${clickable ? `class="bh-row-clickable" data-room-id="${escapeHtml(r.id)}" title="Открыть подробности комнаты"` : ""}>
           <td>${escapeHtml(r.title || "—")}</td>
           <td>${escapeHtml(r.destination || "—")}</td>
@@ -675,20 +708,29 @@
           <td>${r.joinCode ? `<code>${escapeHtml(r.joinCode)}</code>` : "—"}</td>
           <td>${new Date(r.createdAt).toLocaleDateString("ru-RU")}</td>
         </tr>`).join("");
-      el.innerHTML = `
+      listBox.innerHTML = `
         <div class="bh-table-wrap"><table class="bh-table">
           <thead><tr><th>Название</th><th>Направление</th><th>Статус</th><th>Участники</th><th>Мест</th><th>Код</th><th>Создана</th></tr></thead>
           <tbody>${rows}</tbody>
         </table></div>`;
       if (clickable) {
-        el.querySelectorAll("tr[data-room-id]").forEach(tr => {
+        listBox.querySelectorAll("tr[data-room-id]").forEach(tr => {
           tr.onclick = () => openRoomModal(id, baseUrl, tr.dataset.roomId, tr.children[0].textContent);
         });
       }
-    } catch {
-      // Обычно значит, что у сервиса просто нет /internal/rooms (пока — только у Trip).
-      el.innerHTML = `<div class="bh-empty">Не поддерживается этим сервисом</div>`;
     }
+
+    function applyFilter() {
+      const query = searchInput.value.trim().toLowerCase();
+      const status = statusSelect ? statusSelect.value : "";
+      renderRows(rooms.filter(r =>
+        (!query || (r.title || "").toLowerCase().includes(query) || (r.joinCode || "").toLowerCase().includes(query)) &&
+        (!status || r.status === status)
+      ));
+    }
+    searchInput.oninput = applyFilter;
+    if (statusSelect) statusSelect.onchange = applyFilter;
+    renderRows(rooms);
   }
 
   /** Подробности комнаты (клик по строке на вкладке «Комнаты» — только там,

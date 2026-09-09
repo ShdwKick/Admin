@@ -14,17 +14,26 @@
   --ok:#7ddf3c;
   --warn:#ffd447;
   --danger:#ff5c72;
+  /* Акцентный ЦВЕТ ТЕКСТА (не бордюров/подчёркиваний — там flame-tip не
+     трогаем, это просто линия, контраст не так важен). flame-tip (#c77dff)
+     достаточно светлый для тёмного фона, но на белой карточке в светлой теме
+     это ~2:1 контраста — бейдж «админ»/«владелец»/«на модерации (chip)» был
+     почти нечитаем. В светлой теме подменяем на flame-base — тот же оттенок
+     бренда, только тёмный, как и задумано для текста на светлом фоне. */
+  --accent-text:var(--flame-tip);
 }
 :root[data-theme="light"]{
   --ink:#241a3a;
   --ink-dim:#6b6280;
   --card-bg:#ffffff;
   --card-border:color-mix(in srgb, var(--flame-base) 16%, transparent);
+  --accent-text:var(--flame-base);
 }
 @media (prefers-color-scheme:light){
   :root:not([data-theme="dark"]){
     --ink:#241a3a; --ink-dim:#6b6280;
     --card-bg:#ffffff; --card-border:color-mix(in srgb, var(--flame-base) 16%, transparent);
+    --accent-text:var(--flame-base);
   }
 }
 
@@ -222,7 +231,7 @@ table.bh-table tr.bh-row-clickable:hover td{ background:color-mix(in srgb, var(-
 table.bh-table tr.bh-giga-preview td{ background:color-mix(in srgb, var(--warn) 10%, transparent); }
 
 .bh-badge{ display:inline-block; font-size:.72rem; padding:.1rem .5rem; border-radius:1rem; border:1px solid var(--card-border); color:var(--ink-dim); }
-.bh-badge.admin{ color:var(--flame-tip); border-color:color-mix(in srgb, var(--flame-tip) 50%, transparent); }
+.bh-badge.admin{ color:var(--accent-text); border-color:color-mix(in srgb, var(--flame-tip) 50%, transparent); }
 .bh-badge.disabled{ color:var(--danger); border-color:color-mix(in srgb, var(--danger) 50%, transparent); }
 /* Бейдж «N на модерации» (см. правку «Уведомления о модерации в Admin») —
    отдельный от .admin/.disabled оттенок (--warn, уже используется в логах
@@ -240,7 +249,7 @@ table.bh-table tr.bh-giga-preview td{ background:color-mix(in srgb, var(--warn) 
   min-width:1.3rem; height:1.3rem; padding:0 .3rem; border-radius:999px;
   font-size:.72rem; line-height:1;
 }
-.bh-badge.pending{ color:var(--flame-tip); border-color:color-mix(in srgb, var(--flame-tip) 50%, transparent); }
+.bh-badge.pending{ color:var(--accent-text); border-color:color-mix(in srgb, var(--flame-tip) 50%, transparent); }
 .bh-badge.rejected{ color:var(--danger); border-color:color-mix(in srgb, var(--danger) 50%, transparent); }
 
 .bh-loglist{ display:flex; flex-direction:column; gap:.35rem; font-family:ui-monospace,Consolas,monospace; font-size:.82rem; max-height:70vh; overflow:auto; }
