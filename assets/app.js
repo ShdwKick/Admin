@@ -1239,7 +1239,13 @@
         <span class="bh-empty" style="padding:0" id="puzzleBulkCount"></span>
         <div id="puzzleBulkCategoryBox"></div>
         <button class="bh-btn" id="puzzleBulkCategoryApplyBtn">Применить категорию</button>
-        <button class="bh-btn" id="puzzleBulkSuggestBtn">✨ Предложить названия (GigaChat)</button>
+        <!-- Два режима, та же пара, что у одиночных кнопок в модалке пазла
+             (см. openPuzzleEditModal) — по тексту (дешевле, годится для
+             нормального старого названия) и по фото (нужно как раз для
+             партий, автоматически названных болванкой вроде "Библиотека N",
+             где текстом пересказывать нечего — см. правку «Bulk по фото»). -->
+        <button class="bh-btn" id="puzzleBulkSuggestTextBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M4 6h16M4 12h10M4 18h7"/></svg> По тексту (GigaChat)</button>
+        <button class="bh-btn" id="puzzleBulkSuggestImageBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg> По фото (GigaChat)</button>
         <button class="bh-btn danger" id="puzzleBulkDeleteBtn">Удалить отмеченные</button>
       </div>
       <div id="puzzleBulkGigaResult"></div>
@@ -1594,7 +1600,7 @@
         };
       });
       // «✨» — предложение GigaChat для ОДНОЙ строки, тот же принцип, что и
-      // у массового запуска ниже (#puzzleBulkSuggestBtn): показываем
+      // у массового запуска ниже (runBulkSuggest): показываем
       // предложение и ждём подтверждения, не переписываем title сразу.
       // Превью — отдельная строка таблицы сразу под исходной (colspan на
       // всю ширину), не модалка — не хочется прятать саму строку, пока
@@ -1696,24 +1702,26 @@
     };
 
     /** Массовое предложение GigaChat (см. правку «GigaChat-кнопка + bulk
-     *  edit») — последовательно, не Promise.all (тот же приём, что у
-     *  bulkSaveBtn/импорта с Pexels: виден прогресс, не бьём по Puzzle
-     *  пачкой запросов на десятки строк разом, каждый запрос сам по себе не
-     *  быстрый — реально ходит в GigaChat). Результат — список с чекбоксами
-     *  (по умолчанию отмечены все, кроме тех, что упали с ошибкой) и одной
-     *  кнопкой «Применить отмеченные» — тот же принцип «показать и
-     *  подождать подтверждения», что и у одиночной «✨» в renderList.*/
-    document.getElementById("puzzleBulkSuggestBtn").onclick = async () => {
+     *  edit», mode — правку «Bulk по фото») — последовательно, не
+     *  Promise.all (тот же приём, что у bulkSaveBtn/импорта с Pexels: виден
+     *  прогресс, не бьём по Puzzle пачкой запросов на десятки строк разом,
+     *  каждый запрос сам по себе не быстрый — реально ходит в GigaChat).
+     *  Результат — список с чекбоксами (по умолчанию отмечены все, кроме
+     *  тех, что упали с ошибкой) и одной кнопкой «Применить отмеченные» —
+     *  тот же принцип «показать и подождать подтверждения», что и у
+     *  одиночной «✨» в renderList. Общая для обеих кнопок (по тексту/по
+     *  фото) — отличаются только mode, который просто прокидывается в
+     *  suggestTitle.*/
+    async function runBulkSuggest(mode, btn) {
       const ids = [...selectedIds];
       if (!ids.length) return;
-      const btn = document.getElementById("puzzleBulkSuggestBtn");
       btn.disabled = true;
       const results = [];
       for (const [i, pid] of ids.entries()) {
         const p = allPuzzles.find(x => String(x.id) === pid);
-        bulkGigaResultEl.innerHTML = `<div class="bh-empty">Спрашиваю GigaChat — ${i + 1} из ${ids.length}…</div>`;
+        bulkGigaResultEl.innerHTML = `<div class="bh-empty">Спрашиваю GigaChat (${mode === "image" ? "по фото" : "по тексту"}) — ${i + 1} из ${ids.length}…</div>`;
         try {
-          const data = await suggestTitle(pid);
+          const data = await suggestTitle(pid, mode);
           results.push({ pid, oldTitle: p ? p.title : pid, title: data.title, titleEn: data.titleEn, categoryId: p ? p.categoryId : "", error: null });
         } catch (e) {
           results.push({ pid, oldTitle: p ? p.title : pid, error: e.message });
@@ -1721,7 +1729,9 @@
       }
       btn.disabled = false;
       renderBulkGigaReview(results);
-    };
+    }
+    document.getElementById("puzzleBulkSuggestTextBtn").onclick = e => runBulkSuggest("text", e.currentTarget);
+    document.getElementById("puzzleBulkSuggestImageBtn").onclick = e => runBulkSuggest("image", e.currentTarget);
 
     function renderBulkGigaReview(results) {
       const ok = results.filter(r => !r.error);
