@@ -217,6 +217,14 @@ input[type="file"]::file-selector-button:hover{ background:color-mix(in srgb, va
 table.bh-table{ width:100%; border-collapse:collapse; font-size:.88rem; }
 table.bh-table th{ text-align:left; color:var(--ink-dim); font-weight:500; padding:.5rem .6rem; border-bottom:1px solid var(--card-border); }
 table.bh-table td{ padding:.5rem .6rem; border-bottom:1px solid color-mix(in srgb, var(--card-border) 60%, transparent); vertical-align:middle; }
+/* UUID/слаги в ячейках (userId загрузившего, device id, slug категории и
+   т.п.) без этого переносились браузером по дефисам на 2-3 строки в узкой
+   колонке — строка раздувалась по высоте, а соседняя колонка простаивала
+   пустой (обычное авто-выравнивание ширины таблицы делит место по столбцам
+   ДО того, как посчитает такой перенос). nowrap заставляет колонку взять
+   столько ширины, сколько реально нужно значению целиком; если тесно —
+   скроллится .bh-table-wrap, а не переносится вкривь. */
+table.bh-table td code{ white-space:nowrap; }
 table.bh-table tr:hover td{ background:color-mix(in srgb, var(--flame-tip) 5%, transparent); }
 /* Строка комнаты, по которой можно кликнуть за подробностями (см.
    openRoomModal в app.js) — тот же hover, что у всех строк, плюс курсор,

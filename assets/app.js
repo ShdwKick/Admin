@@ -1234,6 +1234,8 @@
       </div>
       <div id="puzzleUploadCategories" style="margin:.4rem 0"></div>
       <div id="puzzleUploadResult"></div>
+
+      <div class="bh-section-title">Список пазлов</div>
       <div class="bh-toolbar">
         <input type="text" class="bh-input-narrow" id="puzzleFilterSearch" placeholder="Поиск по названию" style="width:12em">
         <select id="puzzleFilterCategory"><option value="">Все категории</option></select>
