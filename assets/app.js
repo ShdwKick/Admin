@@ -750,11 +750,22 @@
       return;
     }
 
+    // userId участника показываем как есть (см. Puzzle server.js
+    // getOrCreateAnonIdentity) — для гостей без входа это "anon:<uuid>" из
+    // куки, которая живёт 180 дней на конкретном браузере. Ссылку на комнату
+    // можно переслать кому угодно, но у каждой строки room_members СВОЙ
+    // user_id (PRIMARY KEY room_id+user_id, повторный вход тем же браузером
+    // просто обновил бы существующую строку, а не завёл новую) — значит две
+    // разные строки означают минимум два разных браузера/куки. Это не
+    // доказывает "два разных человека" (тот же человек мог зайти с другого
+    // устройства или через инкогнито), но позволяет визуально сравнить ID и
+    // понять, что это ТОЧНО не одна и та же сессия одного браузера.
     const members = detail.members || [];
     const membersRows = members.map(m => `
       <tr>
         <td>${escapeHtml(m.name || m.username || "—")}${m.role === "owner" ? ' <span class="bh-badge admin">владелец</span>' : ""}</td>
         <td>${m.username ? `<code>${escapeHtml(m.username)}</code>` : "—"}</td>
+        <td><code>${escapeHtml(m.userId)}</code></td>
         <td>${new Date(m.joinedAt).toLocaleString("ru-RU")}</td>
       </tr>`).join("");
 
@@ -792,7 +803,7 @@
       </div>
       <div class="bh-section-title">Участники</div>
       <div class="bh-table-wrap"><table class="bh-table">
-        <thead><tr><th>Имя</th><th>Логин</th><th>Присоединился</th></tr></thead>
+        <thead><tr><th>Имя</th><th>Логин</th><th>ID</th><th>Присоединился</th></tr></thead>
         <tbody>${membersRows}</tbody>
       </table></div>
       <div class="bh-section-title">Пазлы, которые собирали</div>
