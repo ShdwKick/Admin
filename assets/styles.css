@@ -37,6 +37,22 @@
   }
 }
 
+/* Тонкий скроллбар в цвет бренда — дефолтный толстый серо-белый ползунок
+   ОС бросался в глаза внутри тёмной модалки (см. .bh-modal, .bh-table-wrap)
+   сильнее, чем сам факт наличия скролла. scrollbar-width/-color — Firefox,
+   ::-webkit-scrollbar-* — Chrome/Edge/Safari; вместе покрывают всех. */
+*{
+  scrollbar-width:thin;
+  scrollbar-color:color-mix(in srgb, var(--flame-tip) 45%, transparent) transparent;
+}
+*::-webkit-scrollbar{ width:10px; height:10px; }
+*::-webkit-scrollbar-track{ background:transparent; }
+*::-webkit-scrollbar-thumb{
+  background:color-mix(in srgb, var(--flame-tip) 45%, transparent);
+  border-radius:999px; border:2px solid transparent; background-clip:padding-box;
+}
+*::-webkit-scrollbar-thumb:hover{ background:color-mix(in srgb, var(--flame-tip) 65%, transparent); }
+
 *{ box-sizing:border-box; }
 html,body{ height:100%; }
 body{
@@ -213,7 +229,16 @@ input[type="file"]::file-selector-button:hover{ background:color-mix(in srgb, va
    в «Библиотеке», где в строке чекбокс+миниатюра+название+категория+…+кнопки)
    таблица шире вьюпорта; без обёртки это распирало саму страницу по
    горизонтали. Скроллится сама таблица, шапка и вкладки остаются на месте. */
-.bh-table-wrap{ overflow-x:auto; }
+/* flex-shrink:0 — внутри модалки комнаты (.bh-modal — flex-column с
+   max-height:90vh) флекс-контейнер иначе ужимает эту обёртку по высоте,
+   когда общий контент не помещается: overflow-x:auto сам по себе делает
+   элемент "scroll-контейнером", а у таких автоматический минимальный размер
+   внутри флекса — 0, а не высота содержимого (сам CSS Flexbox так требует).
+   В итоге вместо ОДНОГО скролла всей модалки получались отдельные скролл-
+   бары внутри каждой таблицы, обрезанные до пары строк. flex-shrink:0
+   запрещает эту усадку — обёртка занимает всю высоту содержимого, а
+   скроллится модалка целиком. */
+.bh-table-wrap{ overflow-x:auto; flex-shrink:0; }
 table.bh-table{ width:100%; border-collapse:collapse; font-size:.88rem; }
 table.bh-table th{ text-align:left; color:var(--ink-dim); font-weight:500; padding:.5rem .6rem; border-bottom:1px solid var(--card-border); }
 table.bh-table td{ padding:.5rem .6rem; border-bottom:1px solid color-mix(in srgb, var(--card-border) 60%, transparent); vertical-align:middle; }
