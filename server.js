@@ -821,6 +821,22 @@ const server = http.createServer(async (req, res) => {
       // Переименование — та же кнопка «Сохранить», что и у категорий строкой
       // выше (см. wirePuzzleLibrary в app.js): после импорта с Pexels без
       // alt-текста название иногда уходит болванкой, тут его можно поправить.
+      // Пометка «не для детей» (см. правку «Возрастное подтверждение» в
+      // Puzzle): решение модератора, поэтому идёт отдельным действием и
+      // пишется в журнал — в отличие от галочки автора при публикации.
+      const notForKidsMatch = p.match(/^\/api\/services\/([\w-]+)\/puzzles\/([\w-]+)\/not-for-kids$/);
+      if (notForKidsMatch && method === "POST") {
+        const service = SERVICES.find(s => s.id === notForKidsMatch[1]);
+        if (!service) return json(res, 404, { error: "unknown_service" });
+        const body = await readJsonBody(req);
+        try {
+          const data = await callService(service, `/internal/puzzles/${encodeURIComponent(notForKidsMatch[2])}/not-for-kids`, { method: "POST", body });
+          logSelf("info", "Admin-действие: изменена пометка «не для детей»", { service: service.id, by: admin.username, puzzleId: notForKidsMatch[2], notForKids: !!body.notForKids });
+          return json(res, 200, data);
+        } catch (e) {
+          return json(res, 502, { error: "upstream", message: e.message });
+        }
+      }
       const puzzleTitleMatch = p.match(/^\/api\/services\/([\w-]+)\/puzzles\/([\w-]+)\/title$/);
       if (puzzleTitleMatch && method === "POST") {
         const service = SERVICES.find(s => s.id === puzzleTitleMatch[1]);

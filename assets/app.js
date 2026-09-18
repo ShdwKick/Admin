@@ -1388,8 +1388,9 @@
      *  для кнопки «✨» на строке, массового «Предложить названия» ниже и
      *  двух кнопок в модалке «фото целиком» (см. openPuzzleEditModal). mode
      *  — "text" (по умолчанию, дешевле и точнее для существующего названия)
-     *  или "image" (по фото + старому названию, см. правку «Кнопка GigaChat
-     *  по фото + тексту в модалке пазла»). */
+     *  или "image" — по САМОЙ фотографии, старое название в запрос не идёт
+     *  вовсе (см. правку «По фото — без старого названия» в Puzzle/gigachat.js):
+     *  именно за этим режим и нужен, когда прежнее название — болванка. */
     async function suggestTitle(pid, mode) {
       return api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(pid)}/title/suggest`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: mode || "text" }),
@@ -1410,7 +1411,7 @@
               <span>Название</span>
               <span class="bh-toolbar" style="margin:0;gap:.3rem">
                 <button class="bh-btn" id="bhSuggestText" type="button" title="Предложить название по старому тексту через GigaChat"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M4 6h16M4 12h10M4 18h7"/></svg> По тексту</button>
-                <button class="bh-btn" id="bhSuggestImage" type="button" title="Предложить название по фото + старому тексту через GigaChat"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg> По фото</button>
+                <button class="bh-btn" id="bhSuggestImage" type="button" title="Предложить название по самой фотографии через GigaChat (старое название не учитывается)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg> По фото</button>
               </span>
             </span>
             <input type="text" id="bhEditTitle" value="${escapeHtml(p.title)}">
@@ -2320,6 +2321,10 @@
                   <button class="bh-btn" data-action="approve">Одобрить</button>
                   <button class="bh-btn" data-action="reject">Отклонить</button>
                 ` : ""}
+                <!-- Пометку «не для детей» ставит именно модератор (см. правку
+                     «Возрастное подтверждение» в Puzzle): галочка автора при
+                     публикации — только заявка, здесь последнее слово. -->
+                <button class="bh-btn" data-action="notForKids">${p.notForKids ? "✔ Не для детей" : "Не для детей"}</button>
                 <button class="bh-btn danger" data-action="delete">Удалить</button>
                 <button class="bh-btn danger" data-action="ban">Забанить</button>
               </td>
@@ -2363,6 +2368,18 @@
             });
             await load();
             refreshModerationBadge(id);
+          } catch (e) { alert("Не получилось: " + e.message); setBusy(false); }
+        };
+        // Переключатель, а не одноразовая кнопка: снять пометку нужно так же
+        // легко, как поставить (например автор перестраховался галочкой).
+        btn("notForKids").onclick = async () => {
+          const next = !photo.notForKids;
+          setBusy(true);
+          try {
+            await api(`/api/services/${encodeURIComponent(id)}/puzzles/${encodeURIComponent(photoId)}/not-for-kids`, {
+              method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ notForKids: next }),
+            });
+            await load();
           } catch (e) { alert("Не получилось: " + e.message); setBusy(false); }
         };
         btn("delete").onclick = async () => {
